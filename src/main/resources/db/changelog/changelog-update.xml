@@ -12,6 +12,24 @@
     <include file="db/changelog/20121015121627-add-rules-cp-version-column.xml" />
     <include file="db/changelog/20130114143642-add-order-number-to-subscription.xml" />
     <include file="db/changelog/20130124112705-add-reliant-product.xml" />
+    <include file="db/changelog/20130201110620-versioned-rules.xml" />
+    <include file="db/changelog/20130201162323-drop-rules-candlepin-version.xml" />
     <include file="db/changelog/20130212124537-insert-katello-consumer-types.xml" />
     <include file="db/changelog/20130206153101-add-upstream-ids-to-suscription.xml" />
+    <include file="db/changelog/20130319175255-order-number-to-pool.xml" />
+    <include file="db/changelog/20130329094102-drop-account-and-contract-from-entitlement.xml" />
+    <include file="db/changelog/20121019144118-create-upstream-consumer.xml" />
+    <include file="db/changelog/20130315171104-migrate-upstream-uuid.xml" />
+    <include file="db/changelog/20130319110704-drop-upstream-uuid.xml" />
+    <include file="db/changelog/20130319112409-drop-columns-from-import-record.xml" />
+    <include file="db/changelog/20130402153704-add-upstream-consumer-fk.xml" />
+    <include file="db/changelog/20130402164325-create-oracle-schema.xml" />
+    <include file="db/changelog/20130403095818-reconcile-postgresql-with-oracle.xml" />
+    <include file="db/changelog/20130514152949-consumer_installed_product_add_version.xml" />
+    <include file="db/changelog/20130515095101-consumer_installed_product_arch_column.xml" />
+    <include file="db/changelog/20130425102131-distributor-capabilities.xml" />
+    <include file="db/changelog/20130429105623-distributor-version-addition.xml" />
+    <include file="db/changelog/20130501152202-add-content-arch.xml" />
+    <include file="db/changelog/20130531164013-remove-arch-table.xml" />
+    <include file="db/changelog/20130611152026-add-missing-capability-indexes-on-oracle.xml" />
 </databaseChangeLog>

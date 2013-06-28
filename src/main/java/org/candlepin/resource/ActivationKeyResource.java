@@ -28,8 +28,8 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
 
+import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
-import org.candlepin.audit.EventSink;
 import org.candlepin.auth.Access;
 import org.candlepin.auth.interceptor.Verify;
 import org.candlepin.exceptions.BadRequestException;
@@ -52,16 +52,13 @@ public class ActivationKeyResource {
     private ActivationKeyCurator activationKeyCurator;
     private PoolCurator poolCurator;
     private I18n i18n;
-    private EventSink eventSink;
 
     @Inject
     public ActivationKeyResource(ActivationKeyCurator activationKeyCurator,
-        I18n i18n, PoolCurator poolCurator, ConsumerResource consumerResource,
-        EventSink eventSink) {
+        I18n i18n, PoolCurator poolCurator) {
         this.activationKeyCurator = activationKeyCurator;
         this.i18n = i18n;
         this.poolCurator = poolCurator;
-        this.eventSink = eventSink;
     }
 
     /**
@@ -159,6 +156,13 @@ public class ActivationKeyResource {
                 i18n.tr("The quantity must not be greater than the total " +
                     "allowed for the pool"));
         }
+        if (isPoolHostRestricted(pool) &&
+            !StringUtils.isBlank(getKeyHostRestriction(key)) &&
+            !getPoolRequiredHost(pool).equals(getKeyHostRestriction(key))) {
+            throw new BadRequestException(
+                i18n.tr("Activation keys can only use host restricted pools from " +
+                    "a single host."));
+        }
         key.addPool(pool, quantity);
         activationKeyCurator.update(key);
         return pool;
@@ -231,5 +235,23 @@ public class ActivationKeyResource {
                 "Pool with id {0} could not be found.", poolId));
         }
         return pool;
+    }
+
+    private String getKeyHostRestriction(ActivationKey ak) {
+        for (ActivationKeyPool akp : ak.getPools()) {
+            if (isPoolHostRestricted(akp.getPool())) {
+                return akp.getPool().getAttributeValue("requires_host");
+            }
+        }
+        return null;
+    }
+
+    private boolean isPoolHostRestricted(Pool pool) {
+        String host = getPoolRequiredHost(pool);
+        return !StringUtils.isBlank(host);
+    }
+
+    private String getPoolRequiredHost(Pool pool) {
+        return (pool.getAttributeValue("requires_host"));
     }
 }

@@ -14,6 +14,86 @@
  */
 package org.candlepin.resource;
 
+import org.candlepin.audit.Event;
+import org.candlepin.audit.EventAdapter;
+import org.candlepin.audit.EventFactory;
+import org.candlepin.audit.EventSink;
+import org.candlepin.auth.Access;
+import org.candlepin.auth.NoAuthPrincipal;
+import org.candlepin.auth.Principal;
+import org.candlepin.auth.UserPrincipal;
+import org.candlepin.auth.interceptor.SecurityHole;
+import org.candlepin.auth.interceptor.Verify;
+import org.candlepin.config.Config;
+import org.candlepin.config.ConfigProperties;
+import org.candlepin.controller.Entitler;
+import org.candlepin.controller.PoolManager;
+import org.candlepin.exceptions.BadRequestException;
+import org.candlepin.exceptions.CandlepinException;
+import org.candlepin.exceptions.ForbiddenException;
+import org.candlepin.exceptions.IseException;
+import org.candlepin.exceptions.NotFoundException;
+import org.candlepin.model.ActivationKey;
+import org.candlepin.model.ActivationKeyCurator;
+import org.candlepin.model.ActivationKeyPool;
+import org.candlepin.model.CertificateSerialDto;
+import org.candlepin.model.Consumer;
+import org.candlepin.model.ConsumerCapability;
+import org.candlepin.model.ConsumerCurator;
+import org.candlepin.model.ConsumerInstalledProduct;
+import org.candlepin.model.ConsumerType;
+import org.candlepin.model.ConsumerType.ConsumerTypeEnum;
+import org.candlepin.model.ConsumerTypeCurator;
+import org.candlepin.model.DeleteResult;
+import org.candlepin.model.DeletedConsumer;
+import org.candlepin.model.DeletedConsumerCurator;
+import org.candlepin.model.DistributorVersion;
+import org.candlepin.model.DistributorVersionCapability;
+import org.candlepin.model.DistributorVersionCurator;
+import org.candlepin.model.Entitlement;
+import org.candlepin.model.EntitlementCertificate;
+import org.candlepin.model.EntitlementCurator;
+import org.candlepin.model.Environment;
+import org.candlepin.model.EnvironmentCurator;
+import org.candlepin.model.EventCurator;
+import org.candlepin.model.GuestId;
+import org.candlepin.model.IdentityCertificate;
+import org.candlepin.model.Owner;
+import org.candlepin.model.OwnerCurator;
+import org.candlepin.model.Pool;
+import org.candlepin.model.PoolCurator;
+import org.candlepin.model.PoolQuantity;
+import org.candlepin.model.Product;
+import org.candlepin.model.Release;
+import org.candlepin.model.User;
+import org.candlepin.paging.Page;
+import org.candlepin.paging.PageRequest;
+import org.candlepin.paging.Paginate;
+import org.candlepin.pinsetter.tasks.EntitlerJob;
+import org.candlepin.policy.js.compliance.ComplianceRules;
+import org.candlepin.policy.js.compliance.ComplianceStatus;
+import org.candlepin.policy.js.consumer.ConsumerRules;
+import org.candlepin.resource.util.ConsumerInstalledProductEnricher;
+import org.candlepin.resource.util.ResourceDateParser;
+import org.candlepin.service.EntitlementCertServiceAdapter;
+import org.candlepin.service.IdentityCertServiceAdapter;
+import org.candlepin.service.ProductServiceAdapter;
+import org.candlepin.service.SubscriptionServiceAdapter;
+import org.candlepin.service.UserServiceAdapter;
+import org.candlepin.sync.ExportCreationException;
+import org.candlepin.sync.Exporter;
+import org.candlepin.util.Util;
+import org.candlepin.version.CertVersionConflictException;
+
+import com.google.inject.Inject;
+import com.google.inject.persist.Transactional;
+
+import org.apache.log4j.Logger;
+import org.jboss.resteasy.annotations.providers.jaxb.Wrapped;
+import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.quartz.JobDetail;
+import org.xnap.commons.i18n.I18n;
+
 import java.io.File;
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -40,78 +120,6 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-
-import org.apache.log4j.Logger;
-import org.candlepin.audit.Event;
-import org.candlepin.audit.EventAdapter;
-import org.candlepin.audit.EventFactory;
-import org.candlepin.audit.EventSink;
-import org.candlepin.auth.Access;
-import org.candlepin.auth.NoAuthPrincipal;
-import org.candlepin.auth.Principal;
-import org.candlepin.auth.UserPrincipal;
-import org.candlepin.auth.interceptor.SecurityHole;
-import org.candlepin.auth.interceptor.Verify;
-import org.candlepin.config.Config;
-import org.candlepin.config.ConfigProperties;
-import org.candlepin.controller.Entitler;
-import org.candlepin.controller.PoolManager;
-import org.candlepin.exceptions.BadRequestException;
-import org.candlepin.exceptions.CandlepinException;
-import org.candlepin.exceptions.ForbiddenException;
-import org.candlepin.exceptions.IseException;
-import org.candlepin.exceptions.NotFoundException;
-import org.candlepin.model.ActivationKey;
-import org.candlepin.model.ActivationKeyCurator;
-import org.candlepin.model.ActivationKeyPool;
-import org.candlepin.model.CertificateSerialDto;
-import org.candlepin.model.Consumer;
-import org.candlepin.model.ConsumerCurator;
-import org.candlepin.model.ConsumerInstalledProduct;
-import org.candlepin.model.ConsumerType;
-import org.candlepin.model.ConsumerType.ConsumerTypeEnum;
-import org.candlepin.model.ConsumerTypeCurator;
-import org.candlepin.model.DeleteResult;
-import org.candlepin.model.DeletedConsumer;
-import org.candlepin.model.DeletedConsumerCurator;
-import org.candlepin.model.Entitlement;
-import org.candlepin.model.EntitlementCertificate;
-import org.candlepin.model.EntitlementCurator;
-import org.candlepin.model.Environment;
-import org.candlepin.model.EnvironmentCurator;
-import org.candlepin.model.EventCurator;
-import org.candlepin.model.GuestId;
-import org.candlepin.model.IdentityCertificate;
-import org.candlepin.model.Owner;
-import org.candlepin.model.OwnerCurator;
-import org.candlepin.model.Pool;
-import org.candlepin.model.PoolCurator;
-import org.candlepin.model.PoolQuantity;
-import org.candlepin.model.Product;
-import org.candlepin.model.Release;
-import org.candlepin.model.User;
-import org.candlepin.pinsetter.tasks.EntitlerJob;
-import org.candlepin.policy.js.compliance.ComplianceRules;
-import org.candlepin.policy.js.compliance.ComplianceStatus;
-import org.candlepin.policy.js.consumer.ConsumerDeleteHelper;
-import org.candlepin.policy.js.consumer.ConsumerRules;
-import org.candlepin.resource.util.ConsumerInstalledProductEnricher;
-import org.candlepin.resource.util.ResourceDateParser;
-import org.candlepin.service.EntitlementCertServiceAdapter;
-import org.candlepin.service.IdentityCertServiceAdapter;
-import org.candlepin.service.ProductServiceAdapter;
-import org.candlepin.service.SubscriptionServiceAdapter;
-import org.candlepin.service.UserServiceAdapter;
-import org.candlepin.sync.ExportCreationException;
-import org.candlepin.sync.Exporter;
-import org.candlepin.util.Util;
-import org.candlepin.version.CertVersionConflictException;
-import org.jboss.resteasy.annotations.providers.jaxb.Wrapped;
-import org.quartz.JobDetail;
-import org.xnap.commons.i18n.I18n;
-
-import com.google.inject.Inject;
-import com.google.inject.persist.Transactional;
 
 /**
  * API Gateway for Consumers
@@ -140,13 +148,13 @@ public class ConsumerResource {
     private PoolManager poolManager;
     private PoolCurator poolCurator;
     private ConsumerRules consumerRules;
-    private ConsumerDeleteHelper consumerDeleteHelper;
     private OwnerCurator ownerCurator;
     private ActivationKeyCurator activationKeyCurator;
     private Entitler entitler;
     private ComplianceRules complianceRules;
     private DeletedConsumerCurator deletedConsumerCurator;
     private EnvironmentCurator environmentCurator;
+    private DistributorVersionCurator distributorVersionCurator;
     private Config config;
 
     @Inject
@@ -160,11 +168,12 @@ public class ConsumerResource {
         EventSink sink, EventFactory eventFactory, EventCurator eventCurator,
         EventAdapter eventAdapter, UserServiceAdapter userService,
         Exporter exporter, PoolManager poolManager, PoolCurator poolCurator,
-        ConsumerRules consumerRules, ConsumerDeleteHelper consumerDeleteHelper,
-        OwnerCurator ownerCurator, ActivationKeyCurator activationKeyCurator,
-        Entitler entitler, ComplianceRules complianceRules,
-        DeletedConsumerCurator deletedConsumerCurator,
-        EnvironmentCurator environmentCurator, Config config) {
+        ConsumerRules consumerRules, OwnerCurator ownerCurator,
+        ActivationKeyCurator activationKeyCurator, Entitler entitler,
+        ComplianceRules complianceRules, DeletedConsumerCurator deletedConsumerCurator,
+        EnvironmentCurator environmentCurator,
+        DistributorVersionCurator distributorVersionCurator,
+        Config config) {
 
         this.consumerCurator = consumerCurator;
         this.consumerTypeCurator = consumerTypeCurator;
@@ -182,7 +191,6 @@ public class ConsumerResource {
         this.poolManager = poolManager;
         this.poolCurator = poolCurator;
         this.consumerRules = consumerRules;
-        this.consumerDeleteHelper = consumerDeleteHelper;
         this.ownerCurator = ownerCurator;
         this.eventAdapter = eventAdapter;
         this.activationKeyCurator = activationKeyCurator;
@@ -190,10 +198,11 @@ public class ConsumerResource {
         this.complianceRules = complianceRules;
         this.deletedConsumerCurator = deletedConsumerCurator;
         this.environmentCurator = environmentCurator;
-        this.consumerPersonNamePattern =
-            Pattern.compile(config.getString("candlepin.consumer_person_name_pattern"));
-        this.consumerSystemNamePattern =
-            Pattern.compile(config.getString("candlepin.consumer_system_name_pattern"));
+        this.distributorVersionCurator = distributorVersionCurator;
+        this.consumerPersonNamePattern = Pattern.compile(config.getString(
+            ConfigProperties.CONSUMER_PERSON_NAME_PATTERN));
+        this.consumerSystemNamePattern = Pattern.compile(config.getString(
+            ConfigProperties.CONSUMER_SYSTEM_NAME_PATTERN));
         this.config = config;
     }
     /**
@@ -207,9 +216,11 @@ public class ConsumerResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Wrapped(element = "consumers")
+    @Paginate
     public List<Consumer> list(@QueryParam("username") String userName,
         @QueryParam("type") String typeLabel,
-        @QueryParam("owner") String ownerKey) {
+        @QueryParam("owner") String ownerKey,
+        @Context PageRequest pageRequest) {
         ConsumerType type = null;
 
         if (typeLabel != null) {
@@ -229,7 +240,12 @@ public class ConsumerResource {
 
         // We don't look up the user and warn if it doesn't exist here to not
         // give away usernames
-        return consumerCurator.listByUsernameAndType(userName, type, owner);
+        Page<List<Consumer>> p = consumerCurator.listByUsernameAndType(userName,
+            type, owner, pageRequest);
+
+        // Store the page for the LinkHeaderPostInterceptor
+        ResteasyProviderFactory.pushContext(Page.class, p);
+        return p.getPageData();
     }
 
     /**
@@ -369,6 +385,7 @@ public class ConsumerResource {
             owner.getDefaultServiceLevel() != null) {
             consumer.setServiceLevel(owner.getDefaultServiceLevel());
         }
+        updateCapabilities(consumer, null);
 
         logNewConsumerDebugInfo(consumer, keys, type);
 
@@ -442,6 +459,57 @@ public class ConsumerResource {
         }
         return userName;
     }
+
+    /**
+     * @param existing
+     * @param update
+     * @return
+     */
+    private boolean updateCapabilities(Consumer existing, Consumer update) {
+        boolean change = false;
+        if (update == null) {
+            // create
+            if ((existing.getCapabilities() == null ||
+                existing.getCapabilities().isEmpty()) &&
+                existing.getFact("distributor_version") !=  null) {
+                Set<DistributorVersionCapability> capabilities = distributorVersionCurator.
+                    findCapabilitiesByDistVersion(existing.getFact("distributor_version"));
+                if (capabilities != null) {
+                    Set<ConsumerCapability> ccaps = new HashSet<ConsumerCapability>();
+                    for (DistributorVersionCapability dvc : capabilities) {
+                        ConsumerCapability cc =
+                            new ConsumerCapability(existing, dvc.getName());
+                        ccaps.add(cc);
+                    }
+                    existing.setCapabilities(ccaps);
+                }
+                change = true;
+            }
+        }
+        else {
+            // update
+            if (update.getCapabilities() != null) {
+                change = update.getCapabilities().equals(existing.getCapabilities());
+                existing.setCapabilities(update.getCapabilities());
+            }
+            else if (update.getFact("distributor_version") !=  null) {
+                DistributorVersion dv = distributorVersionCurator.findByName(
+                    update.getFact("distributor_version"));
+                if (dv != null) {
+                    Set<ConsumerCapability> ccaps = new HashSet<ConsumerCapability>();
+                    for (DistributorVersionCapability dvc : dv.getCapabilities()) {
+                        ConsumerCapability cc =
+                            new ConsumerCapability(existing, dvc.getName());
+                        ccaps.add(cc);
+                    }
+                    existing.setCapabilities(ccaps);
+                }
+                change = true;
+            }
+        }
+        return change;
+    }
+
     /**
      * @param consumer
      * @param principal
@@ -520,6 +588,10 @@ public class ConsumerResource {
         catch (UnsupportedOperationException e) {
             log.warn("User service does not allow user lookups, " +
                 "cannot verify person consumer.");
+        }
+
+        if (user == null) {
+            throw new NotFoundException(i18n.tr("No such user: {0}"));
         }
 
         // When registering person consumers we need to be sure the username
@@ -675,7 +747,11 @@ public class ConsumerResource {
         // If nothing changes we won't send.
         Event event = eventFactory.consumerModified(toUpdate, updated);
 
-        boolean changesMade = checkForFactsUpdate(toUpdate, updated);
+        // version changed on non-checked in consumer, or list of capabilities
+        // changed on checked in consumer
+        boolean changesMade = updateCapabilities(toUpdate, updated);
+
+        changesMade = checkForFactsUpdate(toUpdate, updated) || changesMade;
         changesMade = checkForInstalledProductsUpdate(toUpdate, updated) || changesMade;
         changesMade = checkForGuestsUpdate(toUpdate, updated) || changesMade;
 
@@ -736,6 +812,11 @@ public class ConsumerResource {
             // get the new name into the id cert
             IdentityCertificate ic = generateIdCert(toUpdate, true);
             toUpdate.setIdCert(ic);
+        }
+
+        if (updated.getLastCheckin() != null) {
+            toUpdate.setLastCheckin(updated.getLastCheckin());
+            changesMade = true;
         }
 
         if (changesMade) {
@@ -1027,7 +1108,7 @@ public class ConsumerResource {
                     .getType().getLabel(), toDelete.getName(), msg), e);
 
         }
-        consumerRules.onConsumerDelete(consumerDeleteHelper, toDelete);
+        consumerRules.onConsumerDelete(toDelete);
 
         Event event = eventFactory.consumerDeleted(toDelete);
         consumerCurator.delete(toDelete);
@@ -1389,26 +1470,33 @@ public class ConsumerResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/{consumer_uuid}/entitlements")
+    @Paginate
     public List<Entitlement> listEntitlements(
         @PathParam("consumer_uuid") @Verify(Consumer.class) String consumerUuid,
-        @QueryParam("product") String productId) {
+        @QueryParam("product") String productId,
+        @Context PageRequest pageRequest) {
 
         Consumer consumer = verifyAndLookupConsumer(consumerUuid);
-        List<Entitlement> returnedEntitlements;
+        Page<List<Entitlement>> entitlementsPage;
         if (productId != null) {
             Product p = productAdapter.getProductById(productId);
             if (p == null) {
                 throw new BadRequestException(i18n.tr("No such product: {0}",
                     productId));
             }
-            returnedEntitlements = entitlementCurator.listByConsumerAndProduct(consumer,
-                productId);
+            entitlementsPage = entitlementCurator.listByConsumerAndProduct(consumer,
+                productId, pageRequest);
         }
         else {
-            returnedEntitlements = entitlementCurator.listByConsumer(consumer);
+            entitlementsPage = entitlementCurator.listByConsumer(consumer, pageRequest);
         }
 
+        // Store the page for the LinkHeaderPostInterceptor
+        ResteasyProviderFactory.pushContext(Page.class, entitlementsPage);
+
+        List<Entitlement> returnedEntitlements = entitlementsPage.getPageData();
         poolManager.regenerateDirtyEntitlements(returnedEntitlements);
+
         return returnedEntitlements;
     }
 
@@ -1567,7 +1655,8 @@ public class ConsumerResource {
         @Verify(value = Consumer.class, require = Access.ALL) String consumerUuid) {
 
         Consumer consumer = verifyAndLookupConsumer(consumerUuid);
-        if (!consumer.getType().isManifest()) {
+        if (consumer.getType() == null ||
+            !consumer.getType().isManifest()) {
             throw new ForbiddenException(
                 i18n.tr(
                     "Consumer {0} cannot be exported. " +

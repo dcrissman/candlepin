@@ -6,8 +6,16 @@
 %global selinux_variants mls strict targeted
 %global selinux_policyver %(%{__sed} -e 's,.*selinux-policy-\\([^/]*\\)/.*,\\1,' /usr/share/selinux/devel/policyhelp || echo 0.0.0)
 %global modulename candlepin
-%define distlibdir %{_tmppath}/distlibdir/
+
+# This is technically just a temporary directory to get us through
+# the compilation phase. It is later destroyed and the spec file will
+# re-call initjars with the correct destination for both tomcat and jboss.
+%define distlibdir $RPM_BUILD_ROOT/%{_tmppath}/distlibdir/
 %define libdir %{_datadir}/java/
+
+# We require the Candlepin SCL, but because we are not an SCL package
+# ourselves, we need to point to deps in the expected location.
+%define scllibdir /opt/rh/candlepin-scl/root
 
 %if 0%{?fedora}
 %define reqcpdeps 1
@@ -15,9 +23,9 @@
 
 Name: candlepin
 Summary: Candlepin is an open source entitlement management system
-Group: Internet/Applications
+Group: System Environment/Daemons
 License: GPLv2
-Version: 0.7.26
+Version: 0.8.15
 Release: 1%{?dist}
 URL: http://fedorahosted.org/candlepin
 # Source0: https://fedorahosted.org/releases/c/a/candlepin/%{name}-%{version}.tar.gz
@@ -28,6 +36,7 @@ BuildArch: noarch
 
 BuildRequires: java-devel >= 0:1.6.0
 BuildRequires: ant >= 0:1.7.0
+BuildRequires: ant-nodeps >= 0:1.7.0
 BuildRequires: gettext
 BuildRequires: selinux-policy-doc
 
@@ -36,16 +45,23 @@ BuildRequires: selinux-policy-doc
 %define distlibdir %{_datadir}/%{name}/lib/
 %define libdir %{_datadir}/%{name}/lib/
 %define usecpdeps "usecpdeps"
-BuildRequires: candlepin-deps
+BuildRequires: candlepin-deps >= 0:0.1.5
 %else
 %define usecpdeps ""
+
+# Require the candlepin software collection for packages we use that may
+# conflict with other projects/releases:
+BuildRequires: scl-utils-build
+BuildRequires: candlepin-scl
+
 BuildRequires: bouncycastle
 BuildRequires: hibernate3 >= 3.3.2
 BuildRequires: hibernate3-annotations >= 0:3.4.0
+
 # for schema
 BuildRequires: hibernate3-entitymanager >= 0:3.4.0
 BuildRequires: hibernate3-commons-annotations
-# end for schema
+
 BuildRequires: google-collections >= 0:1.0
 BuildRequires: resteasy >= 0:2.3.1
 BuildRequires: hornetq >= 0:2.2.11
@@ -55,6 +71,8 @@ BuildRequires: jakarta-commons-lang
 BuildRequires: jakarta-commons-io
 BuildRequires: apache-commons-codec
 BuildRequires: codehaus-jackson >= 0:1.9.2
+
+# Configure Datasources
 BuildRequires: codehaus-jackson-core-lgpl
 BuildRequires: codehaus-jackson-mapper-lgpl
 BuildRequires: codehaus-jackson-xc
@@ -65,24 +83,25 @@ BuildRequires: netty
 BuildRequires: glassfish-jaxb
 BuildRequires: jms >= 0:1.1
 BuildRequires: oauth
-BuildRequires: rhino
 BuildRequires: slf4j >= 0:1.6.1
-BuildRequires: quartz >= 0:2.1.5
+
 # needed to setup runtime deps, not for compilation
 BuildRequires: c3p0
 BuildRequires: scannotation
 BuildRequires: postgresql-jdbc
 BuildRequires: servlet
 BuildRequires: gettext-commons
+
 # resteasy multipart requires this at runtime
 BuildRequires: apache-mime4j
+
 %endif
 
 # Common requires go here
 Requires: java >= 0:1.6.0
 #until cpsetup is removed
 Requires: wget
-Requires: liquibase >= 2.0.3
+Requires: liquibase >= 2.0.5
 Requires: postgresql-jdbc
 
 # specific requires
@@ -93,6 +112,7 @@ Requires: bouncycastle
 Requires: hibernate3 >= 3.3.2
 Requires: hibernate3-annotations >= 0:3.4.0
 Requires: hibernate3-entitymanager >= 0:3.4.0
+Requires: candlepin-scl
 Requires: c3p0
 Requires: resteasy >= 0:2.3.1
 Requires: google-guice >= 0:3.0
@@ -104,8 +124,6 @@ Requires: codehaus-jackson-jaxrs
 Requires: hornetq >= 0:2.2.11
 Requires: netty
 Requires: oauth
-Requires: rhino
-Requires: quartz >= 0:2.1.5
 Requires: log4j
 Requires: glassfish-jaxb
 Requires: scannotation
@@ -127,7 +145,6 @@ Candlepin is an open source entitlement management system.
 Summary: Candlepin web application for tomcat6
 Requires: tomcat6
 Requires: candlepin = %{version}
-Group: Internet/Applications
 
 %description tomcat6
 Candlepin web application for tomcat6
@@ -136,7 +153,6 @@ Candlepin web application for tomcat6
 Summary: Candlepin web application for jboss
 Requires: jbossas >= 4.3
 Requires: candlepin = %{version}
-Group: Internet/Applications
 
 %description jboss
 Candlepin web application for jboss
@@ -150,7 +166,6 @@ Development libraries for candlepin integration
 
 %package certgen-lib
 Summary: candlepin certgen library for use by other apps
-Group: Internet/Applications
 
 %description certgen-lib
 candlepin library for use by other apps
@@ -181,7 +196,7 @@ SELinux policy module supporting candlepin
 mkdir -p %{distlibdir}
 
 %build
-ant -Dlibdir=%{libdir} -Ddistlibdir=%{distlibdir} clean %{usecpdeps} package
+ant -Dlibdir=%{libdir} -Ddistlibdir=%{distlibdir} -Dscllibdir=%{scllibdir}/%{_datadir}/java/ clean %{usecpdeps} package
 
 cd selinux
 for selinuxvariant in %{selinux_variants}
@@ -197,7 +212,8 @@ rm -rf $RPM_BUILD_ROOT
 # Create the directory structure required to lay down our files
 # common
 install -d -m 755 $RPM_BUILD_ROOT/%{_sysconfdir}/%{name}/certs/
-install -m 644 conf/candlepin-upstream-ca.crt %{buildroot}%{_sysconfdir}/%{name}/certs
+install -d -m 755 $RPM_BUILD_ROOT/%{_sysconfdir}/%{name}/certs/upstream/
+install -m 644 conf/candlepin-redhat-ca.crt %{buildroot}%{_sysconfdir}/%{name}/certs/upstream/
 install -d -m 755 $RPM_BUILD_ROOT/%{_sysconfdir}/%{name}/
 install -d -m 755 $RPM_BUILD_ROOT/%{_datadir}/%{name}/
 install -m 755 code/setup/cpsetup $RPM_BUILD_ROOT/%{_datadir}/%{name}/cpsetup
@@ -214,7 +230,8 @@ unzip target/%{name}-%{version}.war -d $RPM_BUILD_ROOT/%{_localstatedir}/lib/tom
 %if !0%{?reqcpdeps}
 #remove the copied jars and resymlink
 rm $RPM_BUILD_ROOT/%{_localstatedir}/lib/tomcat6/webapps/%{name}/WEB-INF/lib/*.jar
-ant -Ddistlibdir=$RPM_BUILD_ROOT/%{_localstatedir}/lib/tomcat6/webapps/%{name}/WEB-INF/lib/ initjars
+ant -Ddistlibdir=$RPM_BUILD_ROOT/%{_localstatedir}/lib/tomcat6/webapps/%{name}/WEB-INF/lib/ -Dscllibdir=%{scllibdir}/%{_datadir}/java/ initjars
+
 %endif
 ln -s /etc/candlepin/certs/keystore $RPM_BUILD_ROOT/%{_sysconfdir}/tomcat6/keystore
 
@@ -226,7 +243,7 @@ unzip target/%{name}-%{version}.war -d $RPM_BUILD_ROOT/%{_localstatedir}/lib/jbo
 %if !0%{?reqcpdeps}
 #remove the copied jars and resymlink
 rm $RPM_BUILD_ROOT/%{_localstatedir}/lib/jbossas/server/production/deploy/%{name}.war/WEB-INF/lib/*.jar
-ant -Ddistlibdir=$RPM_BUILD_ROOT/%{_localstatedir}/lib/jbossas/server/production/deploy/%{name}.war/WEB-INF/lib/ initjars
+ant -Ddistlibdir=$RPM_BUILD_ROOT/%{_localstatedir}/lib/jbossas/server/production/deploy/%{name}.war/WEB-INF/lib/ -Dscllibdir=%{scllibdir}/%{_datadir}/java/ initjars
 %endif
 
 # devel
@@ -279,15 +296,17 @@ fi
 
 
 %files
+%defattr(-,root,root)
 %dir %{_datadir}/%{name}/
 %{_datadir}/%{name}/cpsetup
 %{_datadir}/%{name}/cpdb
 %{_sysconfdir}/%{name}/certs/
+%{_sysconfdir}/%{name}/certs/upstream
 %ghost %attr(644, root, root) %{_sysconfdir}/%{name}/certs/candlepin-ca.crt
 # Default is to track the rpm version of this cert for manifest signatures.
 # If a deployment is managing their own, they will need to restore from the
 # .rpmsave backup after upgrading the candlepin rpm.
-%config %attr(644, root, root) %{_sysconfdir}/%{name}/certs/candlepin-upstream-ca.crt
+%config %attr(644, root, root) %{_sysconfdir}/%{name}/certs/upstream/candlepin-redhat-ca.crt
 %doc LICENSE
 %doc README
 
@@ -326,6 +345,323 @@ fi
 
 
 %changelog
+* Wed Jun 19 2013 Devan Goodwin <dgoodwin@rm-rf.ca> 0.8.15-1
+- Latest translations from zanata. (dgoodwin@redhat.com)
+- Extract latest strings. (dgoodwin@redhat.com)
+
+* Wed Jun 19 2013 Devan Goodwin <dgoodwin@rm-rf.ca> 0.8.14-1
+- make Content arch compares more specific (alikins@redhat.com)
+- new deleted_consumers resource (cduryee@redhat.com)
+- Added empty hash for the new opts param for JSON parsing.
+  (cschevia@redhat.com)
+- group if statements and log.debug instead of warn. (jesusr@redhat.com)
+- Small fix to arch content filter (wpoteat@redhat.com)
+- Add missing capability indexes/fkeys for Oracle. (dgoodwin@redhat.com)
+- Fix recent content arch changeset to work on Oracle. (dgoodwin@redhat.com)
+- pmd: remove unused parameters (jmrodri@gmail.com)
+- pmd: duplicate code: refactor to minimize dupe code (jmrodri@gmail.com)
+- remove delay on single job scheduling. (jesusr@redhat.com)
+- pmd: duplicate code: removed unused test (jmrodri@gmail.com)
+- 966430: Don't suggest quantities we can't actually have.
+  (dgoodwin@redhat.com)
+- Fix sporadically failing unit test. (awood@redhat.com)
+- Push post-filtering logic into AbstractHibernateCurator. (awood@redhat.com)
+- 972752: Correct stacked marketing names (ckozak@redhat.com)
+- Must set page results to the filtered list. (awood@redhat.com)
+- Adding pagination spec tests. (awood@redhat.com)
+- Adding a few more assertions to paging tests. (awood@redhat.com)
+- Add pagination to listing entitlements for a consumer. (awood@redhat.com)
+- Move takeSubList method up to AbstractHibernateCurator. (awood@redhat.com)
+- Default page should be 1 not 0. (awood@redhat.com)
+- Fix bug in determining last page. (awood@redhat.com)
+- Add pagination to pool listings. (awood@redhat.com)
+- Add paging to additional resources. (awood@redhat.com)
+- Fix Content and Product with no arch. (alikins@redhat.com)
+- 971121: Candlepin Lists Derived Pools For Distributors (wpoteat@redhat.com)
+- 963535: Fix instance quantity increment of 2 on virt guests.
+  (dgoodwin@redhat.com)
+
+* Tue Jun 04 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.13-1
+- heal entire org (jesusr@redhat.com)
+- Drop the Arch table/model (alikins@redhat.com)
+- Include arches inherited from product on contents (alikins@redhat.com)
+- Update the last checkin date in the consumer update json only (wpoteat@redhat.com)
+- translate errors for supported calculations (ckozak@redhat.com)
+
+* Thu May 30 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.12-1
+- add paging package to candlepin-api.jar (jesusr@redhat.com)
+
+* Thu May 30 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.11-1
+- pmd: various code clean up (jmrodri@gmail.com)
+- Convert new Integer calls to Integer.valueOf(). (awood@redhat.com)
+- Rename DataPresentation to PageRequest. (awood@redhat.com)
+- Remove checkstyle specific hack. (awood@redhat.com)
+- findbugs: don't use != on Strings. (jmrodri@gmail.com)
+
+* Wed May 29 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.10-1
+- Arch-based content sets (alikins@redhat.com)
+- Added pagination support (awood@redhat.com)
+- Handle specified null list for capabilities (wpoteat@redhat.com)
+- Instanced based spec tests (dgoodwin@redhat.com)
+- 966069: only stack valid ents (ckozak@redhat.com)
+- 959967: calculate installed prods correctly (jesusr@redhat.com)
+
+* Fri May 24 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.9-1
+- 966860: handle older manifests with no id cert (jesusr@redhat.com)
+- remove unused variables (jesusr@redhat.com)
+
+* Thu May 23 2013 Devan Goodwin <dgoodwin@rm-rf.ca> 0.8.8-1
+- Add support for distributor capabilities. (wpoteat@redhat.com)
+- 965310: Fix broken import of identity cert. (dgoodwin@redhat.com)
+- use ConfigProperties enums for requesting configs (alikins@redhat.com)
+- Ignore unknown properties in rules responses. (dgoodwin@redhat.com)
+- get javascript logging working with buildr (jesusr@redhat.com)
+- Added version to installed products (ckozak@redhat.com)
+- installed info no longer transient (ckozak@redhat.com)
+- Fix values for host_limited attribute. (dgoodwin@redhat.com)
+- Better method of detecting when to apply instance multiplier.
+  (dgoodwin@redhat.com)
+- CalculatedAttributesUtil should return a value instead of relying on side-
+  effects. (awood@redhat.com)
+
+* Fri May 10 2013 Michael Stead <mstead@redhat.com> 0.8.7-1
+- Merge pull request #248 from candlepin/alikins/syntastic_classpath
+  (mstead@redhat.com)
+- Add buildfile target to generate a .syntastic_class_path (alikins@redhat.com)
+- Update generate export script to work on arbitrary owner.
+  (dgoodwin@redhat.com)
+- latest strings from zanata (alikins@redhat.com)
+- Merge pull request #247 from candlepin/zeus/instancebased
+  (mstead@redhat.com)
+- minor version bump for rules.js (jesusr@redhat.com)
+- ensure virt guests are not blocked with odd quantity (jesusr@redhat.com)
+- move string to constants (jesusr@redhat.com)
+- remove left over System.out (jesusr@redhat.com)
+- Merge pull request #246 from candlepin/awood/server-side-quantity (dgoodwin
+  @rm-rf.ca)
+- Bump version of JS rules. (awood@redhat.com)
+- Removing dead JS code. (awood@redhat.com)
+- Move security constraints into the Resource layer. (awood@redhat.com)
+- Block physical binds with quantities not multiples of the instance
+  multiplier. (jesusr@redhat.com)
+- Correcting some failing unit tests. (awood@redhat.com)
+- Add calls to stackTracker's updateAccumulatedFromEnt. (awood@redhat.com)
+- Use CoverageCalculator to determine quantity suggested. (awood@redhat.com)
+- Fetch quantity_increment from product attributes. (awood@redhat.com)
+- Adding spec test for calculated attributes from owner resource.
+  (awood@redhat.com)
+- Remove some extra code from pool resource spec test. (awood@redhat.com)
+- Remove requirement that consumers must be in a pool to get calculated
+  attributes. (awood@redhat.com)
+- Adding calculated attributes to OwnerResource. (awood@redhat.com)
+- Move calculated attributes out to a separate class. (awood@redhat.com)
+- Adding spec test for calculated attributes. (awood@redhat.com)
+- Initial attempt at moving quantity calculations into Candlepin.
+  (awood@redhat.com)
+
+* Wed May 08 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.6-1
+- Fix rules guest detection. (dgoodwin@redhat.com)
+- Virt-limit sub-pool quantity should no longer use entitlement quantity.  (dgoodwin@redhat.com)
+- Make manifest rules much faster. (dgoodwin@redhat.com)
+- Entitlement rules refactor. (dgoodwin@redhat.com)
+- 892696: Turn down the logging so that missing rules are infos instead of
+  warns. (bkearney@redhat.com)
+- Move coverage adjustment inside a more generic method. (dgoodwin@redhat.com)
+- Change assumption about default quantity during autobind.
+  (dgoodwin@redhat.com)
+- 956367: do not update quantities for host_limited pools (mstead@redhat.com)
+- Instance based autobind cleanup. (dgoodwin@redhat.com)
+- Do not enforce attributes in some situations. (dgoodwin@redhat.com)
+- Autobind correct quantities for instance based subs. (dgoodwin@redhat.com)
+- fixed translations (ckozak@redhat.com)
+- 958182: Fix the prefix logic to not append hte prefix if the url starts with
+  a normal url prefix (bkearney@redhat.com)
+  (ckozak@redhat.com)
+- changed reason messages, add reason attribute name (ckozak@redhat.com)
+- 957218: Require 3.2 certs for cores enabled subscriptions (mstead@redhat.com)
+- 956200: Enable the owner default SLA usage if none is provided or defined on
+  the consumer (bkearney@redhat.com)
+- Bumping rules version to 3.0 (mstead@redhat.com)
+- System is partial with partial entitlement and no products (mstead@redhat.com)
+- make the next int more random (jesusr@redhat.com)
+- fixed compliance calculation (ckozak@redhat.com)
+- cleaned up ComplianceStatus constructors (ckozak@redhat.com)
+- status is valid if there are no reasons.  This makes the system yellow if
+  there's a partial stack (ckozak@redhat.com)
+- changed messages slightly again for RAM.  SUB covers xGB of yGB of RAM.
+  (reoved word systems to be consistent) (ckozak@redhat.com)
+- changed messages slightly for QE (ckozak@redhat.com)
+- fixed more styling (ckozak@redhat.com)
+- Return compliance status reasons for Compliance namespace (mstead@redhat.com)
+- rearranged StatusMreasonMessageGenerator setup helpers to be more generic
+  (ckozak@redhat.com)
+  StatusReasonMessageGenerator (ckozak@redhat.com)
+- fixed getting non-compliant product names (ckozak@redhat.com)
+- fixed multiple subscription names (ckozak@redhat.com)
+- removed StatusReasonMessageGenerator setter from compliancerules, inject
+  instead.  Added slash-separated subscription names in stack
+  (ckozak@redhat.com)
+- performance improvement on ComplianceRulesTest.  (ckozak@redhat.com)
+- marked helper fields xmltransient (ckozak@redhat.com)
+- refactored ComplianceReason, added StatusReasonMessageGenerator to help build
+  messages (ckozak@redhat.com)
+- candlepin accepts reason structures from javascript and builds translated
+  messages (ckozak@redhat.com)
+
+* Mon Apr 29 2013 Bryan Kearney <bkearney@redhat.com> 0.8.5-1
+- 956873: Fix broken rules on older Candlepin servers. (dgoodwin@redhat.com)
+- Add additional EmptyStringInterceptor test. (awood@redhat.com)
+- Remove the term 'cnsmr' to the extent possible. (awood@redhat.com)
+- Consolidate Oracle dependencies. (awood@redhat.com)
+- Refactoring deploy script to remove dependency on external file.
+  (awood@redhat.com)
+- Add Quartz's Oracle JAR to the buildfile. (awood@redhat.com)
+- Add Oracle support to cpsetup. (awood@redhat.com)
+- Add Oracle support to cpdb. (awood@redhat.com)
+- Add refresh pools support for instance based subscriptions.
+  (dgoodwin@redhat.com)
+- web and api url transposed. (jesusr@redhat.com)
+- Pull in the latest strings (bkearney@redhat.com)
+- Updating Oracle schema creation script. (awood@redhat.com)
+- Small corrections to deployment script. (awood@redhat.com)
+- Add unit tests for EmptyStringUserType. (awood@redhat.com)
+- Add unit tests for EmptyStringInterceptor. (awood@redhat.com)
+- Require newer version of Liquibase (awood@redhat.com)
+- Add Oracle as a deployment option. (awood@redhat.com)
+- Set empty string values in the database to null with liquibase.
+  (awood@redhat.com)
+- For Content objects, read content and GPG URLs stored as null as the empty
+  string. (awood@redhat.com)
+- Adding Hibernate interceptor to prevent writing empty strings to the
+  database. (awood@redhat.com)
+- Add UserType that will convert nulls to empty strings on database reads.
+  (awood@redhat.com)
+- Removing code that is a no-op in Oracle. (awood@redhat.com)
+- Handle null Content paths when writing to a V3 certificate.
+  (awood@redhat.com)
+- The name 'fk_product_id' was being used twice. (awood@redhat.com)
+- The word 'access' is an Oracle reserved word. (awood@redhat.com)
+- Shorten cp_consumer_installed_products table name to less than 30 characters.
+  (awood@redhat.com)
+- Add a comment explaining the consequences of using HBM2DDL for Oracle.
+  (awood@redhat.com)
+- Allow the ownerId in the cp_event table to be null. (awood@redhat.com)
+- Create the Oracle schema and reconcile the PostgreSQL schema.
+  (awood@redhat.com)
+- Add upstream consumer foreign key. (awood@redhat.com)
+- Configure existing changesets to run only on PostgreSQL. (awood@redhat.com)
+
+* Thu Apr 18 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.4-1
+- also copy over created/updated. (jesusr@redhat.com)
+- Bumped minor version of the rules. (mstead@redhat.com)
+- typo: Chagned -> Changed (jmrodri@gmail.com)
+- 949684: Fix unit test failures due to copy paste error when refactoring the
+  code for checkstyle (bkearney@redhat.com)
+- 949684: Update the contract information on pools when subcriptions changed.
+  (bkearney@redhat.com)
+- ensure null/empty contentPrefix handled. remove endless loop.
+  (jmrodri@gmail.com)
+- Adding test data for multi-attribute stacking (mstead@redhat.com)
+- When determining coverage skip prod attributes not set. (mstead@redhat.com)
+- Properly track arch on stacks and calculate compliance. (mstead@redhat.com)
+- In pre_cores use FactValueCalculator to get consumer cores.
+  (mstead@redhat.com)
+- Removed debugging debug statements that were cluttering logs.
+  (mstead@redhat.com)
+- 907315: Added capability to stack on RAM. (mstead@redhat.com)
+- Moved rules namespaces to top of file (mstead@redhat.com)
+- Added comments to rules file. (mstead@redhat.com)
+- A product attribute that has a value of '0' is considered not set.
+  (mstead@redhat.com)
+- Adding cores fact calculation to FactValueCalculator (mstead@redhat.com)
+- Unit and spec tests with corrections to code (wpoteat@redhat.com)
+- Properly support multi-attribute compliance/stacking (mstead@redhat.com)
+- Include cores when finding stacking pools (mstead@redhat.com)
+- Basic cores check for entitlements (mstead@redhat.com)
+- 952735: Add additional checks with content prefixes with many trailing / and
+  content urls with many leading / (bkearney@redhat.com)
+- 952735: Ensure that prefixes plus content urls do not result in double
+  slashes (bkearney@redhat.com)
+- 950462: do not expect numa cpu list to be an int (alikins@redhat.com)
+- only get latest import record (jesusr@redhat.com)
+
+* Tue Apr 16 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.3-1
+- Hard code product attribute separator into rules.js (ckozak@redhat.com)
+- Change to use correct REST call (wpoteat@redhat.com)
+- fix parsing of entitlements with multiple architectures (ckozak@redhat.com)
+- 928045: delete excessive fails to remove all excessive entitlements (wpoteat@redhat.com)
+- 952681: look at upstream_name *NOT* upstream_id (jesusr@redhat.com)
+- Updating the tests to be more robust in Hudson (wpoteat@redhat.com)
+- Removing the Cert V3 Enable flag from configuration (wpoteat@redhat.com)
+- False the boolean not "False" the string (jesusr@redhat.com)
+- add relink option (jesusr@redhat.com)
+
+* Fri Apr 05 2013 jesus m. rodriguez <jesusr@redhat.com> 0.8.2-1
+- remove Fedora 16 and Fedora 17 releaser for Katello (msuchy@redhat.com)
+- require candlepin-deps 0.1.5 or greater (jesusr@redhat.com)
+- Proper comparison between 2 strings of json data (wpoteat@redhat.com)
+- 909467: Now checks stacked entitlements.  Added tests (ckozak@redhat.com)
+- fix scl deps in spec file (cduryee@redhat.com)
+- fix file docstring (jesusr@redhat.com)
+- A developer script used to attach idcert to upstream consumer (jesusr@redhat.com)
+- 909467: warning on architecture mismatch (ckozak@redhat.com)
+- Updates to manifest data. (wpoteat@redhat.com)
+- findbugs: make inner classes static (jmrodri@gmail.com)
+- findbugs: remove unread field: poolManager (jmrodri@gmail.com)
+- findbugs: Possible null pointer dereference of user (jmrodri@gmail.com)
+- findbugs: implement equals() when implementing compareTo (jmrodri@gmail.com)
+- Changes to database update scripts (wpoteat@redhat.com)
+- 914717: rct cat-manifest fails to report Contract from the embedded
+  entitlement cert (wpoteat@redhat.com)
+
+* Mon Apr 01 2013 William Poteat <wpoteat@redhat.com> 0.8.1-1
+- Enable host to guest mapping for hosted mode via an attribute.
+  (awood@redhat.com)
+- Updates can now be emitted from RulesImporter (uploaded manifests).  Events
+  now stored in the database (fixed bug with non-nullable fields set null)
+  (ckozak@redhat.com)
+- New signature checking for manifests (wpoteat@redhat.com)
+- 916467: disable update checks in quartz (jesusr@redhat.com)
+
+* Wed Mar 13 2013 Devan Goodwin <dgoodwin@rm-rf.ca> 0.8.0-1
+- Introduce candlepin software collection. (dgoodwin@rm-rf.ca)
+- converted != to equals instead of !...equals (jesusr@redhat.com)
+- findbugs: Suspicious comparison of Long references (jesusr@redhat.com)
+- New versioned rules v2 implementation. (dgoodwin@redhat.com / mstead@redhat.com)
+- Removed ReadOnly* objects as they are no longer used in rules
+  (mstead@redhat.com)
+- Change of Autobind namespace to use JSON objects (wpoteat@redhat.com)
+- Return JSON from PreEntitlement rules. (mstead@redhat.com)
+- Entitlement rules namespace now supports JSON in (mstead@redhat.com)
+- Add rules version to server status API. (dgoodwin@redhat.com)
+- Move select best pools to it's own Autobind namespace. (dgoodwin@redhat.com)
+- Bump rhino requirement to 0.7R3. (dgoodwin@redhat.com)
+- Moved Pool rules namespace back to Java code (mstead@redhat.com)
+- Move export/criteria rules to Java. (dgoodwin@redhat.com)
+- Move consumer delete namespace back to java. (dgoodwin@redhat.com)
+- More post-bind/unbind logic back into Java. (dgoodwin@redhat.com)
+- Define better filters on model objects. (dgoodwin@redhat.com)
+- Filter timestamps for attributes in rules serialization.
+  (dgoodwin@redhat.com)
+- Add support for skipping attributes when serializating for rules.
+  (dgoodwin@redhat.com)
+- Rename SkipExport to ExportExclude for consistency. (dgoodwin@redhat.com)
+- Export both new and old rules. (dgoodwin@redhat.com)
+- Import specific rules file, not any. (dgoodwin@redhat.com)
+- Add versioning of rules files. (dgoodwin@redhat.com)
+
+* Fri Mar 08 2013 jesus m. rodriguez <jesusr@redhat.com> 0.7.29-1
+- pair down the classes that go in jar to match buildr generated jar (jesusr@redhat.com)
+
+* Fri Mar 08 2013 jesus m. rodriguez <jesusr@redhat.com> 0.7.28-1
+- get resteasy and jackson classes in candlepin-api.jar of rpm (jesusr@redhat.com)
+
+* Thu Mar 07 2013 William Poteat <wpoteat@redhat.com> 0.7.27-1
+- Update of zanata strings (wpoteat@redhat.com)
+- add packages to candlepin_api (dcrissma@redhat.com)
+- Make JsonProvider more re-usable (dcrissma@redhat.com)
+- increase test coverage (jmrodri@gmail.com)
+
 * Fri Mar 01 2013 jesus m. rodriguez <jesusr@redhat.com> 0.7.26-1
 - 909495: Virt-only subscriptions are not exportable (jesusr@redhat.com)
 - add F18 support (jesusr@redhat.com)

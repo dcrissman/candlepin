@@ -20,6 +20,7 @@ import java.util.Set;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
+import org.candlepin.model.Consumer;
 import org.candlepin.model.Entitlement;
 import org.candlepin.model.EntitlementCurator;
 import org.candlepin.model.EnvironmentContent;
@@ -43,6 +44,9 @@ public abstract class X509Util {
             return product != null && StringUtils.isNumeric(product.getId());
         }
     };
+
+    public static final String ARCH_FACT = "uname.machine";
+    public static final String PRODUCT_ARCH_ATTR = "arch";
 
     /**
      * Scan the product content looking for any we should filter out.
@@ -99,5 +103,126 @@ public abstract class X509Util {
         return filtered;
     }
 
+    /**
+     * Creates a Content url from the prefix and the path
+     * @param contentPrefix to prepend to the path
+     * @param pc the product content
+     * @return the complete content path
+     */
+    public String createFullContentPath(String contentPrefix, ProductContent pc) {
+        String prefix = "/";
+        String contentPath = pc.getContent().getContentUrl();
+        // Allow for the case wherethe content url is a true url.
+        // If that is true, then return it as is.
+        if (contentPath.startsWith("http://") ||
+            contentPath.startsWith("file://") ||
+            contentPath.startsWith("https://") ||
+            contentPath.startsWith("ftp://")) {
+            return contentPath;
+        }
+
+        if (!StringUtils.isEmpty(contentPrefix)) {
+            // Ensure there is no double // in the URL. See BZ952735
+            // remove them all except one.
+            prefix = StringUtils.stripEnd(contentPrefix, "/") + prefix;
+        }
+        contentPath = StringUtils.stripStart(contentPath, "/");
+        return prefix + contentPath;
+    }
+
+
+
+    /*
+     * remove content sets that do not match the consumers arch
+     */
+    public Set<ProductContent> filterContentByContentArch(
+        Set<ProductContent> pcSet, Consumer consumer, Product product) {
+        Set<ProductContent> filtered = new HashSet<ProductContent>();
+
+
+        String consumerArch = consumer.getFact(ARCH_FACT);
+        log.debug("consumerArch: " + consumerArch);
+
+        if (consumerArch == null) {
+            log.debug("consumer: " + consumer.getId() + " has no " +
+                ARCH_FACT + " attribute.");
+            log.debug("Not filtering by arch");
+            return pcSet;
+        }
+
+
+        for (ProductContent pc : pcSet) {
+            boolean canUse = true;
+            Set<String> contentArches = Arch.parseArches(pc.getContent().getArches());
+            Set<String> productArches =
+                Arch.parseArches(product.getAttributeValue(PRODUCT_ARCH_ATTR));
+
+            log.debug("productContent arch list for " +
+                pc.getContent().getLabel());
+
+            log.debug("contentArches: " + contentArches);
+            log.debug("productArches: " + productArches);
+
+            // Empty or null Content.arches should result in
+            // inheriting the arches from the product
+            if (contentArches.isEmpty()) {
+                log.debug("Content set " + pc.getContent().getLabel() +
+                    " does not specify content arches");
+
+                // No content arch, see if there is a Product arch
+                // and if so inherit it.
+                if (!productArches.isEmpty()) {
+                    contentArches.addAll(productArches);
+                    log.debug("Using the arches from the product " +
+                        product.toString());
+                    log.debug("productArches: " + productArches.toString());
+                }
+                else {
+                    // No Product arches either, log it, but do
+                    // not filter out this content
+                    log.debug("No arch attributes found for content or product");
+                }
+            }
+
+            for (String contentArch : contentArches) {
+                log.debug("Checking consumerArch " + consumerArch +
+                    " can use content for " + contentArch);
+                log.debug("arch.contentForConsumer" +
+                    Arch.contentForConsumer(contentArch, consumerArch));
+
+                if (Arch.contentForConsumer(contentArch, consumerArch)) {
+                    log.debug("Can use content " +
+                        pc.getContent().getLabel() + " for arch " + contentArch);
+                    canUse = true;
+                    break;
+                }
+                else {
+                    log.debug("Can not use content " +
+                        pc.getContent().getLabel() + " for arch " +
+                        contentArch);
+                    canUse = false;
+                }
+            }
+
+            // If we found a workable arch for this content, include it
+            // also include content where no arch was found at all (on
+            // Content or on Product)
+            if (canUse) {
+                filtered.add(pc);
+                log.debug("Including content " +
+                    pc.getContent().getLabel());
+            }
+            else {
+                log.debug("Skipping content " + pc.getContent().getLabel());
+            }
+
+        }
+        log.debug("Arch approriate content for " +
+            consumerArch + " includes: ");
+        for (ProductContent apc : filtered) {
+            log.debug("\t " + apc.toString());
+        }
+        return filtered;
+    }
 
 }

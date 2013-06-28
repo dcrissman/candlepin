@@ -14,28 +14,40 @@
  */
 package org.candlepin.resource.test;
 
-import static org.junit.Assert.*;
-import static org.mockito.Matchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.eq;
+import static org.mockito.Mockito.atMost;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 import org.candlepin.audit.Event;
 import org.candlepin.audit.EventFactory;
 import org.candlepin.audit.EventSink;
-import org.candlepin.config.Config;
+import org.candlepin.config.CandlepinCommonTestConfig;
 import org.candlepin.controller.Entitler;
 import org.candlepin.controller.PoolManager;
 import org.candlepin.exceptions.BadRequestException;
 import org.candlepin.exceptions.NotFoundException;
 import org.candlepin.model.ActivationKeyCurator;
 import org.candlepin.model.Consumer;
+import org.candlepin.model.ConsumerCapability;
 import org.candlepin.model.ConsumerCurator;
 import org.candlepin.model.ConsumerInstalledProduct;
+import org.candlepin.model.ConsumerType;
 import org.candlepin.model.ConsumerTypeCurator;
 import org.candlepin.model.DeletedConsumerCurator;
 import org.candlepin.model.Entitlement;
@@ -53,8 +65,8 @@ import org.candlepin.service.SubscriptionServiceAdapter;
 import org.candlepin.service.UserServiceAdapter;
 import org.candlepin.test.TestUtil;
 import org.junit.Before;
-import org.junit.Test;
 import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
@@ -89,10 +101,10 @@ public class ConsumerResourceUpdateTest {
         this.resource = new ConsumerResource(this.consumerCurator,
             this.consumerTypeCurator, null, this.subscriptionService, null,
             this.idCertService, null, this.i18n, this.sink, this.eventFactory, null, null,
-            this.userService, null, poolManager, null, null, null, null,
-            this.activationKeyCurator, this.entitler, this.complianceRules,
-            this.deletedConsumerCurator, this.environmentCurator,
-            new Config());
+            this.userService, null, poolManager, null, null, null,
+            this.activationKeyCurator,
+            this.entitler, this.complianceRules, this.deletedConsumerCurator,
+            this.environmentCurator, null, new CandlepinCommonTestConfig());
 
         when(complianceRules.getStatus(any(Consumer.class), any(Date.class)))
             .thenReturn(new ComplianceStatus(new Date()));
@@ -716,6 +728,52 @@ public class ConsumerResourceUpdateTest {
         updated.setName("#a name");
 
         resource.updateConsumer(consumer.getUuid(), updated);
+    }
+
+    @Test
+    public void consumerCapabilityUpdate() {
+        Consumer c = getFakeConsumer();
+        Set<ConsumerCapability> caps = new HashSet<ConsumerCapability>();
+        ConsumerCapability cca = new ConsumerCapability(c, "capability_a");
+        ConsumerCapability ccb = new ConsumerCapability(c, "capability_b");
+        ConsumerCapability ccc = new ConsumerCapability(c, "capability_c");
+        caps.add(cca);
+        caps.add(ccb);
+        caps.add(ccc);
+        c.setCapabilities(caps);
+        ConsumerType ct = new ConsumerType();
+        ct.setManifest(true);
+        c.setType(ct);
+        assertEquals(3, c.getCapabilities().size());
+
+        // no capability list in update object does not change existing
+        // also shows that setCapabilites can accept null and not error
+        Consumer updated = new Consumer();
+        updated.setCapabilities(null);
+        resource.updateConsumer(c.getUuid(), updated);
+        assertEquals(3, c.getCapabilities().size());
+
+        // empty capability list in update object does change existing
+        updated = new Consumer();
+        updated.setCapabilities(new HashSet<ConsumerCapability>());
+        resource.updateConsumer(c.getUuid(), updated);
+        assertEquals(0, c.getCapabilities().size());
+    }
+
+    @Test
+    public void consumerLastCheckin() {
+        Consumer c = getFakeConsumer();
+        Date now = new Date();
+        c.setLastCheckin(now);
+        ConsumerType ct = new ConsumerType();
+        ct.setManifest(true);
+        c.setType(ct);
+
+        Consumer updated = new Consumer();
+        Date then = new Date(now.getTime() + 10000L);
+        updated.setLastCheckin(then);
+        resource.updateConsumer(c.getUuid(), updated);
+        assertEquals(then, c.getLastCheckin());
     }
 
     private Consumer createConsumerWithGuests(String ... guestIds) {

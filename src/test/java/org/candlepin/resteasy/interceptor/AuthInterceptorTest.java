@@ -31,13 +31,13 @@ import org.candlepin.auth.NoAuthPrincipal;
 import org.candlepin.auth.Principal;
 import org.candlepin.auth.UserPrincipal;
 import org.candlepin.auth.interceptor.SecurityHole;
+import org.candlepin.config.CandlepinCommonTestConfig;
 import org.candlepin.config.Config;
 import org.candlepin.exceptions.UnauthorizedException;
 import org.candlepin.guice.I18nProvider;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.ConsumerCurator;
 import org.candlepin.model.DeletedConsumerCurator;
-import org.candlepin.model.OwnerCurator;
 import org.candlepin.model.User;
 import org.candlepin.service.UserServiceAdapter;
 import org.jboss.resteasy.core.ResourceMethod;
@@ -59,7 +59,6 @@ public class AuthInterceptorTest {
     private AuthInterceptor interceptor;
     private Config config;
     private UserServiceAdapter usa;
-    private OwnerCurator oc;
     private ConsumerCurator cc;
     private DeletedConsumerCurator dcc;
     private Injector injector;
@@ -67,14 +66,13 @@ public class AuthInterceptorTest {
 
     @Before
     public void init() {
-        config = new Config();
+        config = new CandlepinCommonTestConfig();
         usa = mock(UserServiceAdapter.class);
-        oc = mock(OwnerCurator.class);
         cc = mock(ConsumerCurator.class);
         dcc = mock(DeletedConsumerCurator.class);
         injector = Guice.createInjector(new AuthInterceptorTestModule());
         i18n = I18nFactory.getI18n(getClass(), Locale.US, I18nFactory.FALLBACK);
-        interceptor = new AuthInterceptor(config, usa, oc, cc, dcc, injector, i18n);
+        interceptor = new AuthInterceptor(config, usa, cc, dcc, injector, i18n);
     }
 
     @Test(expected = UnauthorizedException.class)

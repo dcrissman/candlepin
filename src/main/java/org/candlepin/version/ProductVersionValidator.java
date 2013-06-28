@@ -29,7 +29,7 @@ import org.candlepin.util.RpmVersionComparator;
  *
  * Since the introduction of cert V3, we now have the concept of a certificate
  * version. When certificates are changed (i.e, new attributes), we will bump
- * the certificate's version.
+ * the certificate's version. See X509V3ExtenstionUtil
  *
  * This class defines what certificate version is required for a Product
  * based on its attributes. It has the ability to determine if a given
@@ -48,6 +48,7 @@ public class ProductVersionValidator {
     // Add any product atttribute version requirements here.
     static {
         PRODUCT_ATTR_VERSION_REQUIREMENTS.put("ram", "3.1");
+        PRODUCT_ATTR_VERSION_REQUIREMENTS.put("cores", "3.2");
     }
 
     private ProductVersionValidator() {
@@ -72,8 +73,7 @@ public class ProductVersionValidator {
     public static boolean verifyServerSupport(Config config, Consumer consumer,
         Set<? extends Attribute> productAttributes) {
         String min = ProductVersionValidator.getMin(productAttributes);
-        if ((!config.certV3IsEnabled() && !consumer.hasFact("system.testing")) &&
-            ProductVersionValidator.compareVersion(min, "1.0") > 0) {
+        if (ProductVersionValidator.compareVersion(min, "1.0") > 0) {
             return false;
         }
         return true;
@@ -81,6 +81,11 @@ public class ProductVersionValidator {
 
     public static boolean verifyClientSupport(Consumer consumer,
         Set<? extends Attribute> productAttributes) {
+        // we do not need to worry about this check for distributors, just end clients
+        if (consumer.getType() != null &&
+            consumer.getType().isManifest()) {
+            return true;
+        }
         String consumerVersion = consumer.getFact("system.certificate_version");
         return ProductVersionValidator.validate(productAttributes, consumerVersion);
     }

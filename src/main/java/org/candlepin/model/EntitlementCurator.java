@@ -14,22 +14,25 @@
  */
 package org.candlepin.model;
 
-import java.util.Date;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Set;
+import org.candlepin.paging.PageRequest;
+import org.candlepin.paging.Page;
+import org.candlepin.service.ProductServiceAdapter;
+
+import com.google.inject.Inject;
+import com.google.inject.persist.Transactional;
 
 import org.apache.log4j.Logger;
-import org.candlepin.service.ProductServiceAdapter;
 import org.hibernate.Criteria;
 import org.hibernate.ReplicationMode;
 import org.hibernate.criterion.DetachedCriteria;
 import org.hibernate.criterion.Restrictions;
 import org.xnap.commons.i18n.I18n;
 
-import com.google.inject.Inject;
-import com.google.inject.persist.Transactional;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Set;
 
 /**
  * EntitlementCurator
@@ -68,10 +71,16 @@ public class EntitlementCurator extends AbstractHibernateCurator<Entitlement> {
         return toReturn;
     }
 
-    public List<Entitlement> listByConsumer(Consumer consumer) {
+    public Page<List<Entitlement>> listByConsumer(Consumer consumer,
+        PageRequest pageRequest) {
         DetachedCriteria query = DetachedCriteria.forClass(Entitlement.class)
             .add(Restrictions.eq("consumer", consumer));
-        return listByCriteria(query);
+        return listByCriteria(query, pageRequest);
+    }
+
+    public List<Entitlement> listByConsumer(Consumer consumer) {
+        Page<List<Entitlement>> p = listByConsumer(consumer, null);
+        return p.getPageData();
     }
 
     public List<Entitlement> listByEnvironment(Environment environment) {
@@ -259,11 +268,13 @@ public class EntitlementCurator extends AbstractHibernateCurator<Entitlement> {
 
 
     @Transactional
-    public List<Entitlement> listByConsumerAndProduct(Consumer consumer, String productId) {
+    public Page<List<Entitlement>> listByConsumerAndProduct(Consumer consumer,
+        String productId, PageRequest pageRequest) {
         DetachedCriteria query = DetachedCriteria.forClass(Entitlement.class)
             .add(Restrictions.eq("consumer", consumer));
 
-        List<Entitlement> results = listByCriteria(query);
+        Page<List<Entitlement>> page = listByCriteria(query, pageRequest, true);
+        List<Entitlement> results = page.getPageData();
 
         // TODO: Possible to do this via hibernate query? No luck on first attempt
         // with criteria query.
@@ -273,7 +284,17 @@ public class EntitlementCurator extends AbstractHibernateCurator<Entitlement> {
                 filtered.add(e);
             }
         }
-        return filtered;
+
+        page.setMaxRecords(filtered.size());
+
+        if (pageRequest != null && pageRequest.isPaging()) {
+            page.setPageData(takeSubList(pageRequest, filtered));
+        }
+        else {
+            page.setPageData(filtered);
+        }
+
+        return page;
     }
 
     @Transactional

@@ -25,9 +25,9 @@ import static org.mockito.Matchers.anyString;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Matchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
@@ -58,12 +58,12 @@ import org.candlepin.model.PoolQuantity;
 import org.candlepin.model.Product;
 import org.candlepin.model.Subscription;
 import org.candlepin.policy.ValidationResult;
-import org.candlepin.policy.criteria.CriteriaRules;
 import org.candlepin.policy.js.ProductCache;
+import org.candlepin.policy.js.autobind.AutobindRules;
 import org.candlepin.policy.js.compliance.ComplianceRules;
 import org.candlepin.policy.js.compliance.ComplianceStatus;
 import org.candlepin.policy.js.entitlement.Enforcer;
-import org.candlepin.policy.js.entitlement.PreEntHelper;
+import org.candlepin.policy.js.entitlement.Enforcer.CallerType;
 import org.candlepin.policy.js.entitlement.PreUnbindHelper;
 import org.candlepin.policy.js.pool.PoolRules;
 import org.candlepin.policy.js.pool.PoolUpdate;
@@ -103,9 +103,9 @@ public class PoolManagerTest {
     @Mock
     private Enforcer enforcerMock;
     @Mock
-    private PoolRules poolRulesMock;
+    private AutobindRules autobindRules;
     @Mock
-    private CriteriaRules poolCriteriaMock;
+    private PoolRules poolRulesMock;
     @Mock
     private ConsumerCurator consumerCuratorMock;
     @Mock
@@ -139,7 +139,8 @@ public class PoolManagerTest {
         this.manager = spy(new CandlepinPoolManager(mockPoolCurator, mockSubAdapter,
             productCache, entCertAdapterMock, mockEventSink, eventFactory,
             mockConfig, enforcerMock, poolRulesMock, entitlementCurator,
-            consumerCuratorMock, certCuratorMock, complianceRules, envCurator));
+            consumerCuratorMock, certCuratorMock, complianceRules, envCurator,
+            autobindRules));
 
         when(entCertAdapterMock.generateEntitlementCert(any(Entitlement.class),
             any(Subscription.class), any(Product.class))).thenReturn(
@@ -212,7 +213,7 @@ public class PoolManagerTest {
                 anyBoolean(), anyBoolean())).thenReturn(pools);
 
         List<PoolUpdate> updates = new LinkedList();
-        updates.add(new PoolUpdate(p, false, true, false));
+        updates.add(new PoolUpdate(p, false, true, false, true));
         when(poolRulesMock.updatePools(s, pools)).thenReturn(updates);
 
         this.manager.getRefresher().add(getOwner()).run();
@@ -266,17 +267,6 @@ public class PoolManagerTest {
         return principal.getOwners().get(0);
     }
 
-    private void verifyAndAssertForAllChanges(Subscription s, Pool p,
-        int expectedEventCount) {
-        verify(mockPoolCurator).retrieveFreeEntitlementsOfPool(any(Pool.class),
-            eq(true));
-        verify(mockEventSink, times(expectedEventCount)).sendEvent(any(Event.class));
-
-        assertEquals(s.getQuantity(), p.getQuantity());
-        assertEquals(s.getEndDate(), p.getEndDate());
-        assertEquals(s.getStartDate(), p.getStartDate());
-    }
-
     @Test
     public void testCreatePoolForSubscription() {
         final Subscription s = TestUtil.createSubscription(getOwner(),
@@ -308,8 +298,6 @@ public class PoolManagerTest {
         when(mockPoolCurator.lockAndLoad(any(Pool.class))).thenReturn(pool);
 
         PreUnbindHelper preHelper =  mock(PreUnbindHelper.class);
-        when(enforcerMock.preUnbind(eq(c), eq(pool)))
-            .thenReturn(preHelper);
         ValidationResult result = new ValidationResult();
         when(preHelper.getResult()).thenReturn(result);
 
@@ -326,8 +314,6 @@ public class PoolManagerTest {
         List<Pool> poolsWithSource = createPoolsWithSourceEntitlement(e, product);
         when(mockPoolCurator.listBySourceEntitlement(e)).thenReturn(poolsWithSource);
         PreUnbindHelper preHelper =  mock(PreUnbindHelper.class);
-        when(enforcerMock.preUnbind(eq(e.getConsumer()), eq(e.getPool())))
-            .thenReturn(preHelper);
         ValidationResult result = new ValidationResult();
         when(preHelper.getResult()).thenReturn(result);
         when(mockConfig.standalone()).thenReturn(true);
@@ -351,7 +337,6 @@ public class PoolManagerTest {
         pools.add(pool2);
         Date now = new Date();
 
-        PreEntHelper helper = mock(PreEntHelper.class);
 
         ValidationResult result = mock(ValidationResult.class);
 
@@ -359,15 +344,14 @@ public class PoolManagerTest {
             any(Owner.class), any(String.class), eq(now), anyBoolean(),
             anyBoolean())).thenReturn(pools);
         when(mockPoolCurator.lockAndLoad(any(Pool.class))).thenReturn(pool1);
-        when(enforcerMock.preEntitlement(any(Consumer.class), any(Pool.class), anyInt()))
-            .thenReturn(helper);
+        when(enforcerMock.preEntitlement(any(Consumer.class), any(Pool.class), anyInt(),
+            any(CallerType.class))).thenReturn(result);
 
-        when(helper.getResult()).thenReturn(result);
         when(result.isSuccessful()).thenReturn(true);
 
         List<PoolQuantity> bestPools = new ArrayList<PoolQuantity>();
         bestPools.add(new PoolQuantity(pool1, 1));
-        when(enforcerMock.selectBestPools(any(Consumer.class), any(String[].class),
+        when(autobindRules.selectBestPools(any(Consumer.class), any(String[].class),
             any(List.class), any(ComplianceStatus.class), any(String.class),
             any(Set.class)))
             .thenReturn(bestPools);
@@ -419,8 +403,6 @@ public class PoolManagerTest {
         poolEntitlements.add(ent);
 
         when(mockPoolCurator.entitlementsIn(eq(p))).thenReturn(poolEntitlements);
-        when(enforcerMock.preUnbind(eq(ent.getConsumer()),
-            eq(ent.getPool()))).thenReturn(preHelper);
 
         ValidationResult result = new ValidationResult();
         when(preHelper.getResult()).thenReturn(result);
@@ -452,9 +434,6 @@ public class PoolManagerTest {
         when(mockPoolCurator.entitlementsIn(p)).thenReturn(
                 new ArrayList<Entitlement>(p.getEntitlements()));
         PreUnbindHelper preHelper =  mock(PreUnbindHelper.class);
-        for (Entitlement e : p.getEntitlements()) {
-            when(enforcerMock.preUnbind(eq(e.getConsumer()), eq(p))).thenReturn(preHelper);
-        }
         ValidationResult result = new ValidationResult();
         when(preHelper.getResult()).thenReturn(result);
 
@@ -491,8 +470,6 @@ public class PoolManagerTest {
         pools.add(pool1);
         Date now = new Date();
 
-        PreEntHelper helper = mock(PreEntHelper.class);
-
         ValidationResult result = mock(ValidationResult.class);
 
         // Setup an installed product for the consumer, we'll make the bind request
@@ -508,15 +485,14 @@ public class PoolManagerTest {
             anyBoolean(), anyBoolean())).thenReturn(pools);
 
         when(mockPoolCurator.lockAndLoad(any(Pool.class))).thenReturn(pool1);
-        when(enforcerMock.preEntitlement(any(Consumer.class), any(Pool.class), anyInt()))
-            .thenReturn(helper);
+        when(enforcerMock.preEntitlement(any(Consumer.class), any(Pool.class), anyInt(),
+            any(CallerType.class))).thenReturn(result);
 
-        when(helper.getResult()).thenReturn(result);
         when(result.isSuccessful()).thenReturn(true);
 
         List<PoolQuantity> bestPools = new ArrayList<PoolQuantity>();
         bestPools.add(new PoolQuantity(pool1, 1));
-        when(enforcerMock.selectBestPools(any(Consumer.class), any(String[].class),
+        when(autobindRules.selectBestPools(any(Consumer.class), any(String[].class),
             any(List.class), any(ComplianceStatus.class), any(String.class),
             any(Set.class)))
             .thenReturn(bestPools);
@@ -525,7 +501,7 @@ public class PoolManagerTest {
         manager.entitleByProducts(TestUtil.createConsumer(o),
             null, now);
 
-        verify(enforcerMock).selectBestPools(any(Consumer.class), eq(installedPids),
+        verify(autobindRules).selectBestPools(any(Consumer.class), eq(installedPids),
             any(List.class), eq(mockCompliance), any(String.class),
             any(Set.class));
     }

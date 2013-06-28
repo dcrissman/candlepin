@@ -14,20 +14,20 @@
  */
 package org.candlepin.policy.js.compliance;
 
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import org.apache.log4j.Logger;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.Entitlement;
 import org.candlepin.model.EntitlementCurator;
 import org.candlepin.policy.js.JsRunner;
+import org.candlepin.policy.js.JsonJsContext;
 import org.candlepin.policy.js.RuleExecutionException;
-import org.mozilla.javascript.RhinoException;
+import org.candlepin.policy.js.RulesObjectMapper;
 
 import com.google.inject.Inject;
+
+import org.apache.log4j.Logger;
+
+import java.util.Date;
+import java.util.List;
 
 /**
  * Compliance
@@ -38,13 +38,18 @@ public class ComplianceRules {
 
     private EntitlementCurator entCurator;
     private JsRunner jsRules;
+    private RulesObjectMapper mapper;
     private static Logger log = Logger.getLogger(ComplianceRules.class);
+    private StatusReasonMessageGenerator generator;
 
     @Inject
-    public ComplianceRules(JsRunner jsRules, EntitlementCurator entCurator) {
+    public ComplianceRules(JsRunner jsRules, EntitlementCurator entCurator,
+        StatusReasonMessageGenerator generator) {
         this.entCurator = entCurator;
         this.jsRules = jsRules;
+        this.generator = generator;
 
+        mapper = RulesObjectMapper.instance();
         jsRules.init("compliance_name_space");
     }
 
@@ -57,48 +62,43 @@ public class ComplianceRules {
      */
     public ComplianceStatus getStatus(Consumer c, Date date) {
 
-        List<Entitlement> ents = entCurator.listByConsumerAndDate(c, date);
+        List<Entitlement> ents = entCurator.listByConsumer(c);
 
-        Map<String, Object> args = new HashMap<String, Object>();
+        JsonJsContext args = new JsonJsContext(mapper);
         args.put("consumer", c);
         args.put("entitlements", ents);
         args.put("ondate", date);
-        args.put("helper", new ComplianceRulesHelper(entCurator));
-        args.put("log", log);
-        return runJsFunction(ComplianceStatus.class, "get_status", args);
+        args.put("log", log, false);
+
+        // Convert the JSON returned into a ComplianceStatus object:
+        String json = jsRules.runJsFunction(String.class, "get_status", args);
+        try {
+            ComplianceStatus result = mapper.toObject(json, ComplianceStatus.class);
+            for (ComplianceReason reason : result.getReasons()) {
+                generator.setMessage(c, reason);
+            }
+            return result;
+        }
+        catch (Exception e) {
+            throw new RuleExecutionException(e);
+        }
     }
 
     public boolean isStackCompliant(Consumer consumer, String stackId,
         List<Entitlement> entsToConsider) {
-        Map<String, Object> args = new HashMap<String, Object>();
+        JsonJsContext args = new JsonJsContext(mapper);
         args.put("stack_id", stackId);
         args.put("consumer", consumer);
         args.put("entitlements", entsToConsider);
-        args.put("log", log);
-        return runJsFunction(Boolean.class, "is_stack_compliant", args);
+        args.put("log", log, false);
+        return jsRules.runJsFunction(Boolean.class, "is_stack_compliant", args);
     }
 
     public boolean isEntitlementCompliant(Consumer consumer, Entitlement ent) {
-        Map<String, Object> args = new HashMap<String, Object>();
+        JsonJsContext args = new JsonJsContext(mapper);
         args.put("consumer", consumer);
-        args.put("ent", ent);
-        args.put("log", log);
-        return runJsFunction(Boolean.class, "is_ent_compliant", args);
+        args.put("entitlement", ent);
+        args.put("log", log, false);
+        return jsRules.runJsFunction(Boolean.class, "is_ent_compliant", args);
     }
-
-    private <T extends Object> T runJsFunction(Class<T> clazz, String function,
-        Map<String, Object> args) {
-        T returner = null;
-        try {
-            returner = jsRules.invokeMethod(function, args);
-        }
-        catch (NoSuchMethodException e) {
-            log.warn("No compliance javascript method found: " + function);
-        }
-        catch (RhinoException e) {
-            throw new RuleExecutionException(e);
-        }
-        return returner;
-    }
-
 }

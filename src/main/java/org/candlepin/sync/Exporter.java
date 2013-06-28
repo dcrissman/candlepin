@@ -14,18 +14,36 @@
  */
 package org.candlepin.sync;
 
-import com.google.inject.Inject;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 import org.candlepin.config.Config;
+import org.candlepin.config.ConfigProperties;
 import org.candlepin.guice.PrincipalProvider;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.ConsumerType;
 import org.candlepin.model.ConsumerTypeCurator;
+import org.candlepin.model.DistributorVersion;
+import org.candlepin.model.DistributorVersionCurator;
 import org.candlepin.model.Entitlement;
 import org.candlepin.model.EntitlementCertificate;
 import org.candlepin.model.EntitlementCurator;
+import org.candlepin.model.IdentityCertificate;
 import org.candlepin.model.Product;
 import org.candlepin.model.ProductCertificate;
 import org.candlepin.model.ProvidedProduct;
@@ -36,19 +54,7 @@ import org.candlepin.service.ProductServiceAdapter;
 import org.candlepin.util.VersionUtil;
 import org.codehaus.jackson.map.ObjectMapper;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import com.google.inject.Inject;
 
 /**
  * Exporter
@@ -66,6 +72,8 @@ public class Exporter {
     private RulesExporter rules;
     private EntitlementCertExporter entCert;
     private EntitlementExporter entExporter;
+    private DistributorVersionCurator distVerCurator;
+    private DistributorVersionExporter distVerExporter;
 
     private ConsumerTypeCurator consumerTypeCurator;
     private EntitlementCertServiceAdapter entCertAdapter;
@@ -76,6 +84,8 @@ public class Exporter {
     private ExportRules exportRules;
     private PrincipalProvider principalProvider;
 
+    private static final String LEGACY_RULES_FILE = "/rules/default-rules.js";
+
     @Inject
     public Exporter(ConsumerTypeCurator consumerTypeCurator, MetaExporter meta,
         ConsumerExporter consumerExporter, ConsumerTypeExporter consumerType,
@@ -84,7 +94,8 @@ public class Exporter {
         ProductServiceAdapter productAdapter, ProductCertExporter productCertExporter,
         EntitlementCurator entitlementCurator, EntitlementExporter entExporter,
         PKIUtility pki, Config config, ExportRules exportRules,
-        PrincipalProvider principalProvider) {
+        PrincipalProvider principalProvider, DistributorVersionCurator distVerCurator,
+        DistributorVersionExporter distVerExporter) {
 
         this.consumerTypeCurator = consumerTypeCurator;
 
@@ -103,6 +114,8 @@ public class Exporter {
         this.config = config;
         this.exportRules = exportRules;
         this.principalProvider = principalProvider;
+        this.distVerCurator = distVerCurator;
+        this.distVerExporter = distVerExporter;
 
         mapper = SyncUtils.getObjectMapper(this.config);
     }
@@ -117,11 +130,13 @@ public class Exporter {
 
             exportMeta(baseDir);
             exportConsumer(baseDir, consumer);
+            exportIdentityCertificate(baseDir, consumer);
             exportEntitlements(baseDir, consumer);
             exportEntitlementsCerts(baseDir, consumer, null, true);
             exportProducts(baseDir, consumer);
             exportConsumerTypes(baseDir);
             exportRules(baseDir);
+            exportDistributorVersions(baseDir);
             return makeArchive(consumer, tmpDir, baseDir);
         }
         catch (IOException e) {
@@ -277,20 +292,28 @@ public class Exporter {
         FileWriter writer = new FileWriter(file);
         Meta m = new Meta(getVersion(), new Date(),
             principalProvider.get().getPrincipalName(),
-            getWebAppPrefix());
+            getPrefixWebUrl());
         meta.export(mapper, writer, m);
         writer.close();
     }
 
-    private String getWebAppPrefix() {
-        String webAppPrefix = config.getString("candlepin.export.webapp.prefix");
-        if (webAppPrefix != null && webAppPrefix.trim().equals("")) {
-            webAppPrefix = null;
+    private String getPrefixWebUrl() {
+        String prefixWebUrl = config.getString(ConfigProperties.PREFIX_WEBURL);
+        if (prefixWebUrl != null && prefixWebUrl.trim().equals("")) {
+            prefixWebUrl = null;
         }
-        return webAppPrefix;
+        return prefixWebUrl;
     }
 
-    private String getVersion() throws IOException {
+    private String getPrefixApiUrl() {
+        String prefixApiUrl = config.getString(ConfigProperties.PREFIX_APIURL);
+        if (prefixApiUrl != null && prefixApiUrl.trim().equals("")) {
+            prefixApiUrl = null;
+        }
+        return prefixApiUrl;
+    }
+
+    private String getVersion() {
         Map<String, String> map = VersionUtil.getVersionMap();
         return map.get("version") + "-" + map.get("release");
     }
@@ -298,7 +321,8 @@ public class Exporter {
     private void exportConsumer(File baseDir, Consumer consumer) throws IOException {
         File file = new File(baseDir.getCanonicalPath(), "consumer.json");
         FileWriter writer = new FileWriter(file);
-        this.consumerExporter.export(mapper, writer, consumer);
+        this.consumerExporter.export(mapper, writer, consumer, getPrefixWebUrl(),
+            getPrefixApiUrl());
         writer.close();
     }
 
@@ -326,6 +350,30 @@ public class Exporter {
                     cert.getSerial().getId() + ".pem");
                 FileWriter writer = new FileWriter(file);
                 entCert.export(writer, cert);
+                writer.close();
+            }
+        }
+    }
+
+    private void exportIdentityCertificate(File baseDir, Consumer consumer)
+        throws IOException {
+
+        File idcertdir = new File(baseDir.getCanonicalPath(), "upstream_consumer");
+        idcertdir.mkdir();
+
+        IdentityCertificate cert = consumer.getIdCert();
+        File file = new File(idcertdir.getCanonicalPath(),
+            cert.getSerial().getId() + ".json");
+
+        // paradigm dictates this should go in an exporter.export method
+        FileWriter writer = null;
+
+        try {
+            writer = new FileWriter(file);
+            mapper.writeValue(writer, cert);
+        }
+        finally {
+            if (writer != null) {
                 writer.close();
             }
         }
@@ -429,12 +477,55 @@ public class Exporter {
     }
 
     private void exportRules(File baseDir) throws IOException {
-        File file = new File(baseDir.getCanonicalPath(), "rules");
-        file.mkdir();
-
-        file = new File(file.getCanonicalPath(), "rules.js");
-        FileWriter writer = new FileWriter(file);
+        // Because old candlepin servers assume to import a file in rules dir, we had to
+        // move to a new directory for versioned rules file:
+        File newRulesDir = new File(baseDir.getCanonicalPath(), "rules2");
+        newRulesDir.mkdir();
+        File newRulesFile = new File(newRulesDir.getCanonicalPath(), "rules.js");
+        FileWriter writer = new FileWriter(newRulesFile);
         rules.export(writer);
         writer.close();
+
+        exportLegacyRules(baseDir);
+    }
+
+    /*
+     * We still need to export a copy of the deprecated default-rules.js so new manifests
+     * can still be imported by old candlepin servers.
+     */
+    private void exportLegacyRules(File baseDir) throws IOException {
+        File oldRulesDir = new File(baseDir.getCanonicalPath(), "rules");
+        oldRulesDir.mkdir();
+        File oldRulesFile = new File(oldRulesDir.getCanonicalPath(), "default-rules.js");
+
+        // TODO: does this need a "exporter" object as well?
+        FileUtils.copyFile(new File(
+            this.getClass().getResource(LEGACY_RULES_FILE).getPath()),
+            oldRulesFile);
+    }
+
+    private void exportDistributorVersions(File baseDir) throws IOException {
+        List<DistributorVersion> versions = distVerCurator.findAll();
+        if (versions == null || versions.isEmpty()) { return; }
+
+        File distVerDir = new File(baseDir.getCanonicalPath(), "distributor_version");
+        distVerDir.mkdir();
+
+        FileWriter writer = null;
+        for (DistributorVersion dv : versions) {
+            if (log.isDebugEnabled()) {
+                log.debug("Exporting Distributor Version" + dv.getName());
+            }
+            try {
+                File file = new File(distVerDir.getCanonicalPath(), dv.getName() + ".json");
+                writer = new FileWriter(file);
+                distVerExporter.export(mapper, writer, dv);
+            }
+            finally {
+                if (writer != null) {
+                    writer.close();
+                }
+            }
+        }
     }
 }

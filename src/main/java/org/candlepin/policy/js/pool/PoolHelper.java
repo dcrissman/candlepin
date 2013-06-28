@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.apache.commons.lang.StringUtils;
 import org.candlepin.controller.PoolManager;
 import org.candlepin.model.Attribute;
 import org.candlepin.model.Entitlement;
@@ -33,6 +34,7 @@ import org.candlepin.model.ProductAttribute;
 import org.candlepin.model.ProductPoolAttribute;
 import org.candlepin.model.ProvidedProduct;
 import org.candlepin.model.Subscription;
+import org.candlepin.policy.js.AttributeHelper;
 import org.candlepin.policy.js.ProductCache;
 
 /**
@@ -40,7 +42,7 @@ import org.candlepin.policy.js.ProductCache;
  * post entitlement javascript functions allowing them to perform a specific set
  * of operations we support.
  */
-public class PoolHelper {
+public class PoolHelper extends AttributeHelper {
 
     private PoolManager poolManager;
     private ProductCache productCache;
@@ -65,7 +67,8 @@ public class PoolHelper {
 
         Pool consumerSpecificPool = createPool(productId, pool.getOwner(), quantity,
             pool.getStartDate(), pool.getEndDate(), pool.getContractNumber(),
-            pool.getAccountNumber(), pool.getProvidedProducts());
+            pool.getAccountNumber(), pool.getOrderNumber(),
+            pool.getProvidedProducts());
 
         consumerSpecificPool.setRestrictedToUsername(
                 this.sourceEntitlement.getConsumer().getUsername());
@@ -88,7 +91,7 @@ public class PoolHelper {
 
         Pool consumerSpecificPool = createPool(productId, pool.getOwner(), quantity,
             pool.getStartDate(), pool.getEndDate(), pool.getContractNumber(),
-            pool.getAccountNumber(), pool.getProvidedProducts());
+            pool.getAccountNumber(), pool.getOrderNumber(), pool.getProvidedProducts());
 
         consumerSpecificPool.setAttribute("requires_host",
             sourceEntitlement.getConsumer().getUuid());
@@ -156,7 +159,7 @@ public class PoolHelper {
 
         Pool pool = createPool(productId, sub.getOwner(), quantity, sub.getStartDate(),
             sub.getEndDate(), sub.getContractNumber(), sub.getAccountNumber(),
-            new HashSet<ProvidedProduct>());
+            sub.getOrderNumber(), new HashSet<ProvidedProduct>());
         pool.setSubscriptionId(sub.getId());
 
         copyProvidedProducts(sub, pool);
@@ -248,7 +251,7 @@ public class PoolHelper {
     }
 
     private Pool createPool(String productId, Owner owner, String quantity, Date startDate,
-        Date endDate, String contractNumber, String accountNumber,
+        Date endDate, String contractNumber, String accountNumber, String orderNumber,
         Set<ProvidedProduct> providedProducts) {
 
         Long q = null;
@@ -269,7 +272,7 @@ public class PoolHelper {
             derivedProduct.getName(),
             new HashSet<ProvidedProduct>(), q,
             startDate, endDate,
-            contractNumber, accountNumber);
+            contractNumber, accountNumber, orderNumber);
 
         // Must be sure to copy the provided products, not try to re-use them directly:
         for (ProvidedProduct pp : providedProducts) {
@@ -310,6 +313,12 @@ public class PoolHelper {
         }
 
         return changeFound;
+    }
+
+    public boolean checkForOrderChanges(Pool existingPool, Subscription sub) {
+        return (!StringUtils.equals(existingPool.getOrderNumber(), sub.getOrderNumber()) ||
+            !StringUtils.equals(existingPool.getAccountNumber(), sub.getAccountNumber()) ||
+            !StringUtils.equals(existingPool.getContractNumber(), sub.getContractNumber()));
     }
 
     private boolean haveAttributesChanged(Pool existing, Subscription sub) {

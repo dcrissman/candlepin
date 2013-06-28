@@ -70,7 +70,6 @@ public class X509V3ExtensionUtil extends X509Util{
     private long huffNodeId = 0;
     private static final Object END_NODE = new Object();
     private static boolean treeDebug = false;
-
     @Inject
     public X509V3ExtensionUtil(Config config, EntitlementCurator entCurator) {
         // Output everything in UTC
@@ -224,7 +223,7 @@ public class X509V3ExtensionUtil extends X509Util{
         String virtOnly = ent.getPool().getAttributeValue("virt_only");
         if (virtOnly != null && !virtOnly.trim().equals("")) {
             // only included if not the default value of false
-            Boolean vo = new Boolean(virtOnly.equalsIgnoreCase("true") ||
+            Boolean vo = Boolean.valueOf(virtOnly.equalsIgnoreCase("true") ||
                 virtOnly.equalsIgnoreCase("1"));
             if (vo) {
                 toReturn.setVirtOnly(vo);
@@ -301,30 +300,43 @@ public class X509V3ExtensionUtil extends X509Util{
             product.getAttributeValue("version") : "";
         toReturn.setVersion(version);
 
-        String arch = product.hasAttribute("arch") ?
-            product.getAttributeValue("arch") : "";
-        StringTokenizer st = new StringTokenizer(arch, ",");
+        String productArches = product.getAttributeValue("arch");
+        Set<String> productArchSet = Arch.parseArches(productArches);
+
+        // FIXME: getParsedArches might make more sense to just return a list
         List<String> archList = new ArrayList<String>();
-        while (st.hasMoreElements()) {
-            archList.add((String) st.nextElement());
+        for (String arch : productArchSet) {
+            archList.add(arch);
         }
         toReturn.setArchitectures(archList);
-
         toReturn.setContent(createContent(filterProductContent(product, ent),
-            contentPrefix, promotedContent, consumer));
+            contentPrefix, promotedContent, consumer, product));
 
         return toReturn;
     }
 
+    /*
+     * createContent
+     *
+     * productArchList is a list of arch strings parse from
+     *   product attributes.
+     */
     public List<Content> createContent(
         Set<ProductContent> productContent, String contentPrefix,
-        Map<String, EnvironmentContent> promotedContent, Consumer consumer) {
+        Map<String, EnvironmentContent> promotedContent,
+        Consumer consumer, Product product) {
+
+        Set<ProductContent> filtered = new HashSet<ProductContent>();
 
         List<Content> toReturn = new ArrayList<Content>();
 
         boolean enableEnvironmentFiltering = config.environmentFilteringEnabled();
 
-        for (ProductContent pc : productContent) {
+        // Return only the contents that are arch appropriate
+        Set<ProductContent> archApproriateProductContent = filterContentByContentArch(
+            productContent, consumer, product);
+
+        for (ProductContent pc : archApproriateProductContent) {
             Content content = new Content();
             if (enableEnvironmentFiltering) {
                 if (consumer.getEnvironment() != null && !promotedContent.containsKey(
@@ -335,11 +347,8 @@ public class X509V3ExtensionUtil extends X509Util{
                 }
             }
 
-            // augment the content path with the prefix if it is passed in
-            String contentPath = pc.getContent().getContentUrl();
-            if (contentPrefix != null) {
-                contentPath = contentPrefix + contentPath;
-            }
+            // Augment the content path with the prefix if it is passed in
+            String contentPath = this.createFullContentPath(contentPrefix, pc);
 
             content.setId(pc.getContent().getId());
             content.setType(pc.getContent().getType());
@@ -348,6 +357,23 @@ public class X509V3ExtensionUtil extends X509Util{
             content.setVendor(pc.getContent().getVendor());
             content.setPath(contentPath);
             content.setGpgUrl(pc.getContent().getGpgUrl());
+
+
+            // Set content model's arches here, inheriting from the product if
+            // they are not set on the content.
+            List<String> archesList = new ArrayList<String>();
+
+            Set<String> contentArches = Arch.parseArches(pc.getContent()
+                .getArches());
+            if (contentArches.isEmpty()) {
+                archesList.addAll(Arch.parseArches(product
+                    .getAttributeValue(PRODUCT_ARCH_ATTR)));
+            }
+            else {
+                archesList
+                    .addAll(Arch.parseArches(pc.getContent().getArches()));
+            }
+            content.setArches(archesList);
 
             // Check if we should override the enabled flag due to setting on promoted
             // content:
@@ -441,6 +467,7 @@ public class X509V3ExtensionUtil extends X509Util{
         PathNode endMarker = new PathNode();
         for (Content c : contents) {
             String path = c.getPath();
+
             if (treeDebug) {
                 log.debug(path);
             }
@@ -626,7 +653,7 @@ public class X509V3ExtensionUtil extends X509Util{
             for (NodePair np : parent.getChildren()) {
                 Integer count = segments.get(np.getName());
                 if (count == null) {
-                    count = new Integer(0);
+                    count = 0;
                 }
                 segments.put(np.getName(), ++count);
                 buildSegments(segments, nodes, np.getConnection());
@@ -891,8 +918,9 @@ public class X509V3ExtensionUtil extends X509Util{
         HuffNode pathTrie = makeTrie(triePathDictionary);
 
         StringBuffer nodeBits = new StringBuffer();
-        ByteArrayInputStream bais = new ByteArrayInputStream(payload,
-            (new Long(read)).intValue(), (new Long(payload.length - read).intValue()));
+        ByteArrayInputStream bais = new ByteArrayInputStream(payload, (int) read,
+            (int) (payload.length - read));
+
         int value = bais.read();
         // check for size bits
         int nodeCount = value;
@@ -1160,12 +1188,14 @@ public class X509V3ExtensionUtil extends X509Util{
         }
 
         public String toString() {
-            String parentList =  "";
+            StringBuffer parentList = new StringBuffer("ID: ");
+            parentList.append(id).append(", Parents");
             for (PathNode parent : parents) {
-                parentList += ": " + parent.getId();
+                parentList.append(": ").append(parent.getId());
             }
-            parentList += "";
-            return "ID: " + id + ", Parents" + parentList + ", Children: " + children;
+
+            // "ID: " + id + ", Parents" + parentList + ", Children: " + children;
+            return parentList.append(", Children: ").append(children).toString();
         }
     }
 
@@ -1174,7 +1204,7 @@ public class X509V3ExtensionUtil extends X509Util{
      * NodePair
      */
 
-    public class NodePair implements Comparable{
+    public static class NodePair implements Comparable{
         private String name;
         private PathNode connection;
 
@@ -1205,6 +1235,22 @@ public class X509V3ExtensionUtil extends X509Util{
         @Override
         public int compareTo(Object other) {
             return this.name.compareTo(((NodePair) other).name);
+        }
+
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+
+            if (!(other instanceof NodePair)) {
+                return false;
+            }
+
+            return this.name.equals(((NodePair) other).getName());
+        }
+
+        public int hashCode() {
+            return name.hashCode();
         }
     }
 }

@@ -59,6 +59,7 @@ HIBERNATE = ['org.hibernate:hibernate-core:jar:3.3.2.GA',
              'c3p0:c3p0:jar:0.9.0',
              'dom4j:dom4j:jar:1.6.1']
 DB = 'postgresql:postgresql:jar:9.0-801.jdbc4'
+ORACLE = ['com.oracle:ojdbc6:jar:11.2.0', 'org.quartz-scheduler:quartz-oracle:jar:2.1.5']
 COMMONS = ['commons-codec:commons-codec:jar:1.4',
            'commons-collections:commons-collections:jar:3.1',
            'commons-io:commons-io:jar:1.3.2',
@@ -85,6 +86,7 @@ OAUTH= [group('oauth',
               :version => '20100527')]
 
 QUARTZ = 'org.quartz-scheduler:quartz:jar:2.1.5'
+
 HORNETQ = [group('hornetq-core',
                  'hornetq-core-client',
 #                 'hornetq-resources', #Native libs for libaio
@@ -95,7 +97,7 @@ HORNETQ = [group('hornetq-core',
 
 SCHEMASPY = 'net.sourceforge:schemaSpy:jar:4.1.1'
 
-RHINO = 'rhino:js:jar:1.7R2'
+RHINO = 'org.mozilla:rhino:jar:1.7R3'
 
 LOGDRIVER = 'logdriver:logdriver:jar:1.0'
 
@@ -123,6 +125,13 @@ if not findbugs.nil?
     require 'buildr-findBugs'
 end
 
+use_pmd = ENV['pmd']
+if not use_pmd.nil?
+    require 'buildr/pmd'
+end
+
+use_logdriver = ENV['logdriver']
+
 #############################################################################
 # PROJECT BUILD
 #############################################################################
@@ -145,11 +154,15 @@ define "candlepin" do
 
   # download the stuff we do not have in the repositories
   download artifact(SCHEMASPY) => 'http://downloads.sourceforge.net/project/schemaspy/schemaspy/SchemaSpy%204.1.1/schemaSpy_4.1.1.jar'
-  download artifact(LOGDRIVER) => 'http://jmrodri.fedorapeople.org/ivy/candlepin/logdriver/logdriver/1.0/logdriver-1.0.jar' if Buildr.environment == 'logdriver'
+  download artifact(LOGDRIVER) => 'http://jmrodri.fedorapeople.org/ivy/candlepin/logdriver/logdriver/1.0/logdriver-1.0.jar' if use_logdriver
 
   # Resource Substitution
   resources.filter.using 'version'=>VERSION_NUMBER,
         'release'=>RELEASE_NUMBER
+
+  if not use_pmd.nil?
+      pmd.enabled = true
+  end
 
   # Hook in gettext bundle generation to compile
   nopo = ENV['nopo']
@@ -170,10 +183,15 @@ define "candlepin" do
   #
   compile.options.target = '1.6'
   compile.options.source = '1.6'
-  compile_classpath = [COMMONS, DB, RESTEASY, LOG4J, HIBERNATE, BOUNCYCASTLE,
+  compile_classpath = [COMMONS, RESTEASY, LOG4J, HIBERNATE, BOUNCYCASTLE,
     GUICE, JACKSON, QUARTZ, GETTEXT_COMMONS, HORNETQ, SUN_JAXB, MIME4J, OAUTH, RHINO, COLLECTIONS]
   compile.with compile_classpath
-  compile.with LOGDRIVER if Buildr.environment == 'logdriver'
+  compile.with LOGDRIVER if use_logdriver
+  if Buildr.environment == 'oracle'
+    compile.with ORACLE
+  else
+    compile.with DB
+  end
 
   #
   # testing
@@ -183,9 +201,13 @@ define "candlepin" do
   test.setup do |task|
     filter('src/main/resources/META-INF').into('target/classes/META-INF').run
   end
-  test.with COMMONS, DB, RESTEASY, JUNIT, LOG4J, HIBERNATE, BOUNCYCASTLE, HSQLDB, GUICE, QUARTZ, GETTEXT_COMMONS, MIME4J, RHINO, COLLECTIONS, generate
-  test.with LOGDRIVER if Buildr.environment == 'logdriver'
-  test.using :java_args => [ '-Xmx2g', '-XX:+HeapDumpOnOutOfMemoryError' ]
+
+  # the other dependencies are gotten from compile.classpath automagically
+  test.with HSQLDB, JUNIT, generate
+  test.with LOGDRIVER if use_logdriver
+  # tell log4j to use a different config file during unit tests
+  # this avoids log4j using the config from guice-persist
+  test.using :java_args => [ '-Xmx2g', '-XX:+HeapDumpOnOutOfMemoryError', '-Dlog4j.configuration=log4j-test.properties' ]
 
 
   #
@@ -195,7 +217,7 @@ define "candlepin" do
 
   # NOTE: changes here must also be made in build.xml!
 
-  package(:jar, :id=>'candlepin-api').clean.include 'target/classes/org/candlepin/auth','target/classes/org/candlepin/config','target/classes/org/candlepin/service','target/classes/org/candlepin/model','target/classes/org/candlepin/pki', 'target/classes/org/candlepin/exceptions', 'target/classes/org/candlepin/util', 'target/classes/org/candlepin/jackson', 'target/classes/org/candlepin/resteasy', :path=>"org/candlepin/"
+  package(:jar, :id=>'candlepin-api').clean.include 'target/classes/org/candlepin/auth','target/classes/org/candlepin/config','target/classes/org/candlepin/service','target/classes/org/candlepin/model','target/classes/org/candlepin/pki', 'target/classes/org/candlepin/exceptions', 'target/classes/org/candlepin/util', 'target/classes/org/candlepin/jackson', 'target/classes/org/candlepin/resteasy', 'target/classes/org/candlepin/paging', :path=>"org/candlepin/"
   package(:jar, :id=>"candlepin-certgen").clean.include 'target/classes/org/candlepin/config', 'target/classes/org/candlepin/jackson', 'target/classes/org/candlepin/model', 'target/classes/org/candlepin/pki', 'target/classes/org/candlepin/util', 'target/classes/org/candlepin/service','target/classes/org/candlepin/pinsetter','target/classes/org/candlepin/exceptions', :path=>'org/candlepin'
   package(:war, :id=>"candlepin").libs += artifacts(HSQLDB)
   package(:war, :id=>"candlepin").classes << generate
@@ -206,6 +228,22 @@ define "candlepin" do
       jar = File.basename(a.to_s).sub!(/(.*)-\d.*.jar/, '\1')
       puts "<include name=\"**/#{jar}-*.jar\"/>"
     end
+  end
+
+  desc "generate a .syntastic_class_path for vim/syntastic"
+  task :list_classpath do
+    # see https://github.com/scrooloose/syntastic/blob/master/syntax_checkers/java/javac.vim
+    # this generates a .syntastic_class_path so the syntastic javac checker will
+    # work properly
+    syntastic_class_path = File.new(".syntastic_class_path", "w")
+    syn_class_path_buf = ""
+    compile.dependencies.inject("") { |a,c| syn_class_path_buf << "#{c}\n"}
+    syn_class_path_buf << "#{Java.tools_jar}\n"
+    # I'm sure there is a better way to figure out local target
+    syn_class_path_buf << "target/classes\n"
+
+    syntastic_class_path.write(syn_class_path_buf)
+    syntastic_class_path.close()
   end
 
   desc 'Crawl the REST API and print a summary.'
@@ -281,7 +319,10 @@ define "candlepin" do
     sh('cp -R target/apidoc website/')
   end
 
-
+  desc 'run rpmlint on the spec file'
+  task :rpmlint do
+      sh('rpmlint -f rpmlint.config candlepin.spec')
+  end
 
   #
   # coverity report generation
@@ -317,7 +358,7 @@ define "candlepin" do
           ant.classpath :path=>_('target/classes')
           ant.jpaconfiguration :persistenceunit=>'production'
           ant.hbm2ddl :export=>'false', :update=>'false', :drop=>'false', :create=>'true',
-            :outputfilename=>'candlepin-proxy.sql', :delimiter=>';', :format=>'false', :haltonerror=>'true'
+            :outputfilename=>'candlepin-proxy.sql', :delimiter=>';', :format=>'true', :haltonerror=>'true'
         end
       end
     ensure
@@ -371,7 +412,7 @@ namespace "gettext" do
 end
 
 desc 'Make sure eventhing is working as it should'
-task :check_all => [:clean, :checkstyle, :test, :deploy, :spec]
+task :check_all => [:clean, :checkstyle, 'candlepin:rpmlint', :test, :deploy, :spec]
 
 #==========================================================================
 # Tomcat deployment

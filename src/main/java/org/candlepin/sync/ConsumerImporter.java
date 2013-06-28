@@ -14,14 +14,19 @@
  */
 package org.candlepin.sync;
 
-import java.io.IOException;
-import java.io.Reader;
-
 import org.apache.log4j.Logger;
-import org.codehaus.jackson.map.ObjectMapper;
+import org.candlepin.model.CertificateSerial;
+import org.candlepin.model.CertificateSerialCurator;
+import org.candlepin.model.IdentityCertificate;
+import org.candlepin.model.IdentityCertificateCurator;
 import org.candlepin.model.Owner;
 import org.candlepin.model.OwnerCurator;
+import org.candlepin.model.UpstreamConsumer;
+import org.codehaus.jackson.map.ObjectMapper;
 import org.xnap.commons.i18n.I18n;
+
+import java.io.IOException;
+import java.io.Reader;
 
 /**
  * ConsumerImporter
@@ -30,18 +35,24 @@ public class ConsumerImporter {
     private static Logger log = Logger.getLogger(ConsumerImporter.class);
 
     private OwnerCurator curator;
+    private IdentityCertificateCurator idCertCurator;
     private I18n i18n;
+    private CertificateSerialCurator serialCurator;
 
-    public ConsumerImporter(OwnerCurator curator, I18n i18n) {
+    public ConsumerImporter(OwnerCurator curator, IdentityCertificateCurator idCertCurator,
+        I18n i18n, CertificateSerialCurator serialCurator) {
         this.curator = curator;
+        this.idCertCurator = idCertCurator;
         this.i18n = i18n;
+        this.serialCurator = serialCurator;
     }
 
     public ConsumerDto createObject(ObjectMapper mapper, Reader reader) throws IOException {
         return mapper.readValue(reader, ConsumerDto.class);
     }
 
-    public void store(Owner owner, ConsumerDto consumer, ConflictOverrides forcedConflicts)
+    public void store(Owner owner, ConsumerDto consumer,
+        ConflictOverrides forcedConflicts, IdentityCertificate idcert)
         throws SyncDataFormatException {
 
         if (consumer.getUuid() == null) {
@@ -80,7 +91,35 @@ public class ConsumerImporter {
             }
         }
 
-        owner.setUpstreamUuid(consumer.getUuid());
+        /*
+         * WARNING: Strange quirk here, we create a certificate serial object
+         * here which does not match the actual serial of the identity
+         * certificate. Presumably this is to prevent potential conflicts with
+         * a serial that came from somewhere else. This is consistent with
+         * importing entitlement certs (as subscription certs).
+         */
+        if (idcert != null) {
+            CertificateSerial cs = new CertificateSerial();
+            cs.setCollected(idcert.getSerial().isCollected());
+            cs.setExpiration(idcert.getSerial().getExpiration());
+            cs.setRevoked(idcert.getSerial().isRevoked());
+            cs.setUpdated(idcert.getSerial().getUpdated());
+            cs.setCreated(idcert.getSerial().getCreated());
+            serialCurator.create(cs);
+
+            idcert.setId(null);
+            idcert.setSerial(cs);
+            idCertCurator.create(idcert);
+        }
+
+        // create an UpstreamConsumer from the imported ConsumerDto
+        UpstreamConsumer uc = new UpstreamConsumer(consumer.getName(),
+            consumer.getOwner(), consumer.getType(), consumer.getUuid());
+        uc.setWebUrl(consumer.getUrlWeb());
+        uc.setApiUrl(consumer.getUrlApi());
+        uc.setIdCert(idcert);
+        owner.setUpstreamConsumer(uc);
+
         curator.merge(owner);
     }
 

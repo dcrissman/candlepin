@@ -14,20 +14,29 @@
  */
 package org.candlepin.model;
 
-import java.io.Serializable;
-import java.util.Collection;
-import java.util.List;
-
-import javax.persistence.EntityManager;
-
-import org.apache.log4j.Logger;
 import org.candlepin.auth.interceptor.EnforceAccessControl;
-import org.hibernate.Session;
-import org.hibernate.criterion.DetachedCriteria;
+import org.candlepin.paging.PageRequest;
+import org.candlepin.paging.Page;
 
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.persist.Transactional;
+
+import org.hibernate.Criteria;
+import org.hibernate.Session;
+import org.hibernate.criterion.DetachedCriteria;
+import org.hibernate.criterion.Order;
+import org.hibernate.criterion.Projection;
+import org.hibernate.criterion.Projections;
+import org.hibernate.impl.CriteriaImpl;
+import org.hibernate.transform.ResultTransformer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import javax.persistence.EntityManager;
 
 /**
  * AbstractHibernateCurator
@@ -35,7 +44,6 @@ import com.google.inject.persist.Transactional;
  */
 public abstract class AbstractHibernateCurator<E extends Persisted> {
     @Inject protected Provider<EntityManager> entityManager;
-    private static Logger log = Logger.getLogger(AbstractHibernateCurator.class);
     private final Class<E> entityType;
     private int batchSize = 30;
 
@@ -85,12 +93,150 @@ public abstract class AbstractHibernateCurator<E extends Persisted> {
     public List<E> listAll() {
         return listByCriteria(DetachedCriteria.forClass(entityType));
     }
+    @SuppressWarnings("unchecked")
+    @Transactional
+    @EnforceAccessControl
+    public Page<List<E>> listAll(PageRequest pageRequest, boolean postFilter) {
+        Page<List<E>> resultsPage;
+        if (postFilter) {
+            // Create a copy of the page request with just the order and sort by values.
+            // Since we are filtering after the results are returned, we don't want
+            // to send the page or page size values in.
+            PageRequest orderAndSortByPageRequest = null;
+            if (pageRequest != null) {
+                orderAndSortByPageRequest = new PageRequest();
+                orderAndSortByPageRequest.setOrder(pageRequest.getOrder());
+                orderAndSortByPageRequest.setSortBy(pageRequest.getSortBy());
+            }
+
+            resultsPage = listAll(orderAndSortByPageRequest);
+
+            // Set the pageRequest to the correct object here.
+            resultsPage.setPageRequest(pageRequest);
+        }
+        else {
+            resultsPage = listAll(pageRequest);
+        }
+        return resultsPage;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Transactional
+    @EnforceAccessControl
+    public Page<List<E>> listAll(PageRequest pageRequest) {
+        Page<List<E>> page = new Page<List<E>>();
+
+        if (pageRequest != null) {
+            Criteria count = currentSession().createCriteria(entityType);
+            page.setMaxRecords(findRowCount(count));
+
+            Criteria c = currentSession().createCriteria(entityType);
+            page.setPageData(loadPageData(c, pageRequest));
+            page.setPageRequest(pageRequest);
+        }
+        else {
+            page.setPageData(listAll());
+        }
+
+        return page;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<E> loadPageData(Criteria c, PageRequest pageRequest) {
+        c.addOrder(createPagingOrder(pageRequest));
+        if (pageRequest.isPaging()) {
+            c.setFirstResult((pageRequest.getPage() - 1) * pageRequest.getPerPage());
+            c.setMaxResults(pageRequest.getPerPage());
+        }
+        return c.list();
+    }
+
+    private Order createPagingOrder(PageRequest p) {
+        String sortBy = (p.getSortBy() == null) ?
+            AbstractHibernateObject.DEFAULT_SORT_FIELD : p.getSortBy();
+        PageRequest.Order order = (p.getOrder() == null) ?
+            PageRequest.DEFAULT_ORDER : p.getOrder();
+
+        switch (order) {
+            case ASCENDING:
+                return Order.asc(sortBy);
+            //DESCENDING
+            default:
+                return Order.desc(sortBy);
+        }
+    }
+
+    private Integer findRowCount(Criteria c) {
+        c.setProjection(Projections.rowCount());
+        return (Integer) c.uniqueResult();
+    }
 
     @SuppressWarnings("unchecked")
     @Transactional
     @EnforceAccessControl
     public List<E> listByCriteria(DetachedCriteria query) {
         return query.getExecutableCriteria(currentSession()).list();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Transactional
+    @EnforceAccessControl
+    public Page<List<E>> listByCriteria(DetachedCriteria query,
+        PageRequest pageRequest, boolean postFilter) {
+        Page<List<E>> resultsPage;
+        if (postFilter) {
+            // Create a copy of the page request with just the order and sort by values.
+            // Since we are filtering after the results are returned, we don't want
+            // to send the page or page size values in.
+            PageRequest orderAndSortByPageRequest = null;
+            if (pageRequest != null) {
+                orderAndSortByPageRequest = new PageRequest();
+                orderAndSortByPageRequest.setOrder(pageRequest.getOrder());
+                orderAndSortByPageRequest.setSortBy(pageRequest.getSortBy());
+            }
+
+            resultsPage = listByCriteria(query, orderAndSortByPageRequest);
+
+            // Set the pageRequest to the correct object here.
+            resultsPage.setPageRequest(pageRequest);
+        }
+        else {
+            resultsPage = listByCriteria(query, pageRequest);
+        }
+        return resultsPage;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Transactional
+    @EnforceAccessControl
+    public Page<List<E>> listByCriteria(DetachedCriteria query,
+        PageRequest pageRequest) {
+        Page<List<E>> page = new Page<List<E>>();
+
+        if (pageRequest != null) {
+            // see https://forum.hibernate.org/viewtopic.php?t=974802
+            Criteria c = query.getExecutableCriteria(currentSession());
+
+            // Save original Projection and ResultTransformer
+            CriteriaImpl cImpl = (CriteriaImpl) c;
+            Projection origProjection = cImpl.getProjection();
+            ResultTransformer origRt = cImpl.getResultTransformer();
+
+            // Get total number of records by setting a rowCount projection
+            page.setMaxRecords(findRowCount(c));
+
+            // Restore original Projection and ResultTransformer
+            c.setProjection(origProjection);
+            c.setResultTransformer(origRt);
+
+            page.setPageData(loadPageData(c, pageRequest));
+            page.setPageRequest(pageRequest);
+        }
+        else {
+            page.setPageData(listByCriteria(query));
+        }
+
+        return page;
     }
 
     @SuppressWarnings("unchecked")
@@ -164,5 +310,20 @@ public abstract class AbstractHibernateCurator<E extends Persisted> {
 
     public void refresh(E object) {
         getEntityManager().refresh(object);
+    }
+
+    public List<E> takeSubList(PageRequest pageRequest, List<E> results) {
+        int fromIndex = (pageRequest.getPage() - 1) * pageRequest.getPerPage();
+        if (fromIndex >= results.size()) {
+            return new ArrayList<E>();
+        }
+
+        int toIndex = fromIndex + pageRequest.getPerPage();
+        if (toIndex > results.size()) {
+            toIndex = results.size();
+        }
+        // sublist returns a portion of the list between the specified fromIndex,
+        // inclusive, and toIndex, exclusive.
+        return results.subList(fromIndex, toIndex);
     }
 }

@@ -77,8 +77,8 @@ public class EntitlementImporter {
         subscription.setStartDate(entitlement.getStartDate());
         subscription.setEndDate(entitlement.getEndDate());
 
-        subscription.setAccountNumber(entitlement.getAccountNumber());
-        subscription.setContractNumber(entitlement.getContractNumber());
+        subscription.setAccountNumber(entitlement.getPool().getAccountNumber());
+        subscription.setContractNumber(entitlement.getPool().getContractNumber());
 
         subscription.setQuantity(entitlement.getQuantity().longValue());
 
@@ -193,7 +193,7 @@ public class EntitlementImporter {
                 map = new HashMap<String, Subscription>();
             }
             for (Subscription localSub : map.values()) {
-                if (localSub.getQuantity() == subscription.getQuantity()) {
+                if (localSub.getQuantity().equals(subscription.getQuantity())) {
                     local = localSub;
                     break;
                 }
@@ -291,8 +291,8 @@ public class EntitlementImporter {
     private void mergeSubscription(Subscription subscription, Subscription local,
         Map<String, Subscription> map) {
         subscription.setId(local.getId());
-        subscriptionCurator.merge(subscription);
         map.remove(local.getUpstreamEntitlementId());
+        subscriptionCurator.merge(subscription);
         // send updated event
         sink.emitSubscriptionModified(local, subscription);
     }
@@ -311,7 +311,7 @@ public class EntitlementImporter {
      * descending quantity sort on Subscriptions
      */
 
-    public class QuantityComparator implements Comparator<Subscription> {
+    public static class QuantityComparator implements Comparator<Subscription> {
         @Override
         public int compare(Subscription s1, Subscription s2) {
             return s2.getQuantity().compareTo(s1.getQuantity());

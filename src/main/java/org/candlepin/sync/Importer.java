@@ -35,6 +35,7 @@ import java.util.zip.ZipInputStream;
 import javax.persistence.PersistenceException;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.log4j.Logger;
 import org.candlepin.audit.EventSink;
 import org.candlepin.config.Config;
@@ -44,8 +45,12 @@ import org.candlepin.model.CertificateSerialCurator;
 import org.candlepin.model.ConsumerType;
 import org.candlepin.model.ConsumerTypeCurator;
 import org.candlepin.model.ContentCurator;
+import org.candlepin.model.DistributorVersion;
+import org.candlepin.model.DistributorVersionCurator;
 import org.candlepin.model.ExporterMetadata;
 import org.candlepin.model.ExporterMetadataCurator;
+import org.candlepin.model.IdentityCertificate;
+import org.candlepin.model.IdentityCertificateCurator;
 import org.candlepin.model.Owner;
 import org.candlepin.model.OwnerCurator;
 import org.candlepin.model.Product;
@@ -53,7 +58,6 @@ import org.candlepin.model.ProductCurator;
 import org.candlepin.model.Subscription;
 import org.candlepin.model.SubscriptionCurator;
 import org.candlepin.pki.PKIUtility;
-import org.candlepin.util.VersionUtil;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.hibernate.exception.ConstraintViolationException;
 import org.xnap.commons.i18n.I18n;
@@ -79,7 +83,9 @@ public class Importer {
         ENTITLEMENTS("entitlements"),
         ENTITLEMENT_CERTIFICATES("entitlement_certificates"),
         PRODUCTS("products"),
-        RULES("rules");
+        RULES_FILE("rules2/rules.js"),
+        UPSTREAM_CONSUMER("upstream_consumer"),
+        DISTRIBUTOR_VERSIONS("distributor_version");
 
         private String fileName;
         ImportFile(String fileName) {
@@ -110,6 +116,7 @@ public class Importer {
     private OwnerCurator ownerCurator;
     private ContentCurator contentCurator;
     private SubscriptionCurator subCurator;
+    private IdentityCertificateCurator idCertCurator;
     private PoolManager poolManager;
     private PKIUtility pki;
     private Config config;
@@ -117,19 +124,23 @@ public class Importer {
     private CertificateSerialCurator csCurator;
     private EventSink sink;
     private I18n i18n;
+    private DistributorVersionCurator distVerCurator;
 
     @Inject
     public Importer(ConsumerTypeCurator consumerTypeCurator, ProductCurator productCurator,
         RulesImporter rulesImporter, OwnerCurator ownerCurator,
+        IdentityCertificateCurator idCertCurator,
         ContentCurator contentCurator, SubscriptionCurator subCurator, PoolManager pm,
         PKIUtility pki, Config config, ExporterMetadataCurator emc,
-        CertificateSerialCurator csc, EventSink sink, I18n i18n) {
+        CertificateSerialCurator csc, EventSink sink, I18n i18n,
+        DistributorVersionCurator distVerCurator) {
 
         this.config = config;
         this.consumerTypeCurator = consumerTypeCurator;
         this.productCurator = productCurator;
         this.rulesImporter = rulesImporter;
         this.ownerCurator = ownerCurator;
+        this.idCertCurator = idCertCurator;
         this.contentCurator = contentCurator;
         this.subCurator = subCurator;
         this.poolManager = pm;
@@ -139,6 +150,7 @@ public class Importer {
         this.csCurator = csc;
         this.sink = sink;
         this.i18n = i18n;
+        this.distVerCurator = distVerCurator;
     }
 
     /**
@@ -218,9 +230,8 @@ public class Importer {
                                           "contain the required signature file"));
             }
 
-            exportStream = new FileInputStream(new File(tmpDir, "consumer_export.zip"));
-            boolean verifiedSignature = pki.verifySHA256WithRSAHashWithUpstreamCACert(
-                exportStream,
+            boolean verifiedSignature = pki.verifySHA256WithRSAHashAgainstCACerts(
+                new File(tmpDir, "consumer_export.zip"),
                 loadSignature(new File(tmpDir, "signature")));
             if (!verifiedSignature) {
                 log.warn("Archive signature check failed.");
@@ -255,6 +266,10 @@ public class Importer {
             for (File file : listFiles) {
                 importFiles.put(file.getName(), file);
             }
+
+            // Need the rules file as well which is in a nested dir:
+            File rulesFile = new File(exportDir, ImportFile.RULES_FILE.fileName());
+            importFiles.put(ImportFile.RULES_FILE.fileName(), rulesFile);
 
             ConsumerDto consumer = importObjects(owner, importFiles, overrides);
             Meta m = mapper.readValue(importFiles.get(ImportFile.META.fileName()),
@@ -320,15 +335,6 @@ public class Importer {
             throw new ImporterException(i18n.tr("The archive does not contain the " +
                                    "required meta.json file"));
         }
-        File rules = importFiles.get(ImportFile.RULES.fileName());
-        if (rules == null) {
-            throw new ImporterException(i18n.tr("The archive does not contain the " +
-                                    "required rules directory"));
-        }
-        if (rules.listFiles().length == 0) {
-            throw new ImporterException(i18n.tr("The archive does not contain the " +
-                "required rules file(s)"));
-        }
         File consumerTypes = importFiles.get(ImportFile.CONSUMER_TYPE.fileName());
         if (consumerTypes == null) {
             throw new ImporterException(i18n.tr("The archive does not contain the " +
@@ -346,6 +352,7 @@ public class Importer {
                                         "required entitlements directory"));
         }
 
+
         // system level elements
         /*
          * Checking a system wide last import date breaks multi-tenant deployments whenever
@@ -360,9 +367,15 @@ public class Importer {
         List<ImportConflictException> conflictExceptions =
             new LinkedList<ImportConflictException>();
 
-        importRules(rules.listFiles(), metadata);
+        File rules = importFiles.get(ImportFile.RULES_FILE.fileName());
+        importRules(rules, metadata);
 
         importConsumerTypes(consumerTypes.listFiles());
+
+        File distributorVersions = importFiles.get(ImportFile.DISTRIBUTOR_VERSIONS.fileName());
+        if (distributorVersions != null) {
+            importDistributorVersions(distributorVersions.listFiles());
+        }
 
         // per user elements
         try {
@@ -375,7 +388,14 @@ public class Importer {
 
         ConsumerDto consumer = null;
         try {
-            consumer = importConsumer(owner, consumerFile, overrides);
+            Meta m = mapper.readValue(metadata, Meta.class);
+            File upstreamFile = importFiles.get(ImportFile.UPSTREAM_CONSUMER.fileName());
+            File[] dafiles = new File[0];
+            if (upstreamFile != null) {
+                dafiles = upstreamFile.listFiles();
+            }
+            consumer = importConsumer(owner, consumerFile,
+                dafiles, overrides, m);
         }
         catch (ImportConflictException e) {
             conflictExceptions.add(e);
@@ -394,7 +414,7 @@ public class Importer {
         // This also implies there will be no entitlements to import.
         if (importFiles.get(ImportFile.PRODUCTS.fileName()) != null) {
             Refresher refresher = poolManager.getRefresher();
-            ProductImporter importer = new ProductImporter(productCurator, contentCurator, poolManager);
+            ProductImporter importer = new ProductImporter(productCurator, contentCurator);
 
             Set<Product> productsToImport = importProducts(
                 importFiles.get(ImportFile.PRODUCTS.fileName()).listFiles(),
@@ -421,33 +441,23 @@ public class Importer {
         return consumer;
     }
 
-    public void importRules(File[] rulesFiles, File metadata) throws IOException {
+    public void importRules(File rulesFile, File metadata) throws IOException {
 
-        // only import rules if versions are ok
-        Meta m = mapper.readValue(metadata, Meta.class);
-
-        if (VersionUtil.getRulesVersionCompatibility(m.getVersion())) {
-            // Only importing a single rules file now.
-            Reader reader = null;
-            try {
-                reader = new FileReader(rulesFiles[0]);
-                rulesImporter.importObject(reader, m.getVersion());
-            }
-            finally {
-                if (reader != null) {
-                    reader.close();
-                }
+        Reader reader = null;
+        try {
+            reader = new FileReader(rulesFile);
+            rulesImporter.importObject(reader);
+        }
+        catch (FileNotFoundException fnfe) {
+            log.warn("Skipping rules import, manifest does not contain rules file: " +
+                ImportFile.RULES_FILE.fileName());
+            return;
+        }
+        finally {
+            if (reader != null) {
+                reader.close();
             }
         }
-        else {
-            log.warn(
-                i18n.tr(
-                    "Incompatible rules: import version {0} older than our version {1}.",
-                    m.getVersion(), VersionUtil.getVersionString()));
-            log.warn(
-                i18n.tr("Manifest data will be imported without rules import."));
-        }
-
     }
 
     public void importConsumerTypes(File[] consumerTypes) throws IOException {
@@ -469,15 +479,53 @@ public class Importer {
     }
 
     public ConsumerDto importConsumer(Owner owner, File consumerFile,
-        ConflictOverrides forcedConflicts)
+        File[] upstreamConsumer, ConflictOverrides forcedConflicts, Meta meta)
         throws IOException, SyncDataFormatException {
-        ConsumerImporter importer = new ConsumerImporter(ownerCurator, i18n);
+
+        IdentityCertificate idcert = null;
+        for (File uc : upstreamConsumer) {
+            if (uc.getName().endsWith(".json")) {
+                log.debug("Import upstream consumeridentity certificate: " +
+                    uc.getName());
+                Reader reader = null;
+                try {
+                    reader = new FileReader(uc);
+                    idcert = mapper.readValue(reader, IdentityCertificate.class);
+                }
+                finally {
+                    if (reader != null) {
+                        reader.close();
+                    }
+                }
+            }
+            else {
+                log.warn("Extra file found in upstream_consumer directory: " +
+                    (uc != null ? uc.getName() : "null"));
+            }
+        }
+
+        ConsumerImporter importer = new ConsumerImporter(ownerCurator, idCertCurator,
+            i18n, csCurator);
         Reader reader = null;
         ConsumerDto consumer = null;
         try {
             reader = new FileReader(consumerFile);
             consumer = importer.createObject(mapper, reader);
-            importer.store(owner, consumer, forcedConflicts);
+            // we can not rely on the actual ConsumerType in the ConsumerDto
+            // because it could have an id not in our database. We need to
+            // stick with the label. Hence we need to lookup the ACTUAL type
+            // by label here before attempting to store the UpstreamConsumer
+            ConsumerType type = consumerTypeCurator.lookupByLabel(
+                consumer.getType().getLabel());
+            consumer.setType(type);
+
+            // in older manifests the web app prefix will not
+            // be on the consumer, we can use the one stored in
+            // the metadata
+            if (StringUtils.isEmpty(consumer.getUrlWeb())) {
+                consumer.setUrlWeb(meta.getWebAppPrefix());
+            }
+            importer.store(owner, consumer, forcedConflicts, idcert);
         }
         finally {
             if (reader != null) {
@@ -551,7 +599,7 @@ public class Importer {
      */
     private File extractArchive(File tempDir, File exportFile)
         throws IOException, ImportExtractionException {
-        log.info("Extracting archive to: " + tempDir.getAbsolutePath());
+        log.debug("Extracting archive to: " + tempDir.getAbsolutePath());
         byte[] buf = new byte[1024];
         ZipInputStream zipinputstream = new ZipInputStream(new FileInputStream(exportFile));
         ZipEntry zipentry = zipinputstream.getNextEntry();
@@ -619,5 +667,24 @@ public class Importer {
                 }
             }
         }
+    }
+
+    public void importDistributorVersions(File[] versionFiles) throws IOException {
+        DistributorVersionImporter importer =
+            new DistributorVersionImporter(distVerCurator);
+        Set<DistributorVersion> distVers = new HashSet<DistributorVersion>();
+        for (File verFile : versionFiles) {
+            Reader reader = null;
+            try {
+                reader = new FileReader(verFile);
+                distVers.add(importer.createObject(mapper, reader));
+            }
+            finally {
+                if (reader != null) {
+                    reader.close();
+                }
+            }
+        }
+        importer.store(distVers);
     }
 }

@@ -82,7 +82,7 @@ public class ProductResourceTest extends DatabaseTestFixture {
             Math.abs(Long.valueOf("test-content".hashCode())));
         Content testContent = new Content("test-content", contentHash,
                             "test-content-label", "yum", "test-vendor",
-                             "test-content-url", "test-gpg-url");
+                             "test-content-url", "test-gpg-url", "test-arch");
 
         HashSet<Content> contentSet = new HashSet<Content>();
         testContent = contentCurator.create(testContent);
@@ -96,7 +96,7 @@ public class ProductResourceTest extends DatabaseTestFixture {
     public void testDeleteProductWithSubscriptions() {
         ProductServiceAdapter pa = mock(ProductServiceAdapter.class);
         I18n i18n = I18nFactory.getI18n(getClass(), Locale.US, I18nFactory.FALLBACK);
-        ProductResource pr = new ProductResource(pa, null, null, null, null, i18n);
+        ProductResource pr = new ProductResource(pa, null, null, null, i18n);
         Product p = mock(Product.class);
         when(pa.getProductById(eq("10"))).thenReturn(p);
         Set<Subscription> subs = new HashSet<Subscription>();

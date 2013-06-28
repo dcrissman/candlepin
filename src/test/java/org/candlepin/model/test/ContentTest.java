@@ -14,13 +14,13 @@
  */
 package org.candlepin.model.test;
 
+
 import java.util.HashSet;
 import org.candlepin.model.Content;
 import org.candlepin.test.DatabaseTestFixture;
 import org.junit.Test;
 import static org.junit.Assert.*;
 import static org.hamcrest.collection.IsCollectionContaining.hasItem;
-import static org.junit.Assert.assertThat;
 
 
 /**
@@ -34,7 +34,8 @@ public class ContentTest extends DatabaseTestFixture {
             Math.abs(Long.valueOf("test-content".hashCode())));
         Content content = new Content("test-content", contentHash,
                             "test-content-label", "yum", "test-vendor",
-                             "test-content-url", "test-gpg-url");
+                             "test-content-url", "test-gpg-url",
+                             "test-arch1,test-arch2");
         HashSet<String> modifiedProductIds = new HashSet<String>();
         modifiedProductIds.add("ProductA");
         modifiedProductIds.add("ProductB");
@@ -52,17 +53,34 @@ public class ContentTest extends DatabaseTestFixture {
     }
 
     @Test
+    public void testContentWithArches() {
+        String  contentHash = String.valueOf(
+            Math.abs(Long.valueOf("test-content-arches".hashCode())));
+
+        Content content = new Content("test-content-arches", contentHash,
+                            "test-content-arches-label", "yum", "test-vendor",
+                             "test-content-url", "test-gpg-url", "");
+        String arches = "x86_64, i386";
+        content.setArches(arches);
+        contentCurator.create(content);
+
+        Content lookedUp = contentCurator.find(content.getId());
+        assertEquals(lookedUp.getArches(), arches);
+    }
+
+    @Test
     public void testCreateOrUpdateWithNewLabel() {
         Content content = new Content("Test Content", "100",
             "test-content-label", "yum", "test-vendor",
-             "test-content-url", "test-gpg-url");
+             "test-content-url", "test-gpg-url", "test-arch1");
         contentCurator.create(content);
 
         // Same ID, but label changed:
         String newLabel = "test-content-label-new";
         String newName = "Test Content Updated";
         Content modifiedContent = new Content(newName, "100",
-            newLabel, "yum", "test-vendor", "test-content-url", "test-gpg-url");
+            newLabel, "yum", "test-vendor", "test-content-url",
+            "test-gpg-url", "test-arch1");
         contentCurator.createOrUpdate(modifiedContent);
 
         content = contentCurator.find("100");

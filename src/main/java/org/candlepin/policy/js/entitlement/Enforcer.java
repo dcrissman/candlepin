@@ -17,19 +17,38 @@ package org.candlepin.policy.js.entitlement;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.Entitlement;
 import org.candlepin.model.Pool;
-import org.candlepin.model.PoolQuantity;
-import org.candlepin.policy.js.RuleExecutionException;
-import org.candlepin.policy.js.compliance.ComplianceStatus;
+import org.candlepin.policy.ValidationResult;
 import org.candlepin.policy.js.pool.PoolHelper;
-
-import java.util.List;
-import java.util.Set;
 
 /**
  * Enforces the entitlement rules definitions.
  */
 public interface Enforcer {
 
+    /**
+     * Enum representing context with which the rules are being called.
+     * Currently being used by preEntitlement - 2013-05-06
+     */
+    public enum CallerType {
+        BIND("bind"),
+        UNKNOWN("unknown"),
+        LIST_POOLS("list_pools"),
+        BEST_POOLS("best_pools");
+
+        private final String label;
+
+        CallerType(String label) {
+            this.label = label;
+        }
+
+        public String getLabel() {
+            return this.label;
+        }
+
+        public String toString() {
+            return getLabel();
+        }
+    }
 
     /**
      * Run pre-entitlement checks.
@@ -43,39 +62,10 @@ public interface Enforcer {
      * @param consumer Consumer who wishes to consume an entitlement.
      * @param entitlementPool Entitlement pool to consume from.
      * @param quantity number of entitlements to consume.
-     * @return TODO
+     * @return {@link ValidationResult} a validation result from the pre-entitlement run.
      */
-    PreEntHelper preEntitlement(Consumer consumer, Pool entitlementPool, Integer quantity);
-
-    /**
-     * Run post-entitlement actions.
-     *
-     * @param postEntHelper A post entitlement helper.
-     * @param ent The entitlement that was just granted.
-     * @return post-entitlement processor
-     */
-    PoolHelper postEntitlement(Consumer c, PoolHelper postEntHelper, Entitlement ent);
-
-    /**
-     * Select the best entitlement pools available for the given product IDs.
-     *
-     * If no pools are available for all products, null will be returned.
-     *
-     * Will throw RuleExecutionException if both pools and a rule exist, but no pool
-     * is returned from the rule.
-     *
-     * @param consumer the consumer to fetch best pools for.
-     * @param productIds Product IDs
-     * @param pools List of pools to select from.
-     * @return best pools as determined by the rules, and the quantity to take from each
-     * @throws RuleExecutionException Thrown if both pools and a rule exist, but no
-     * pool is returned.
-     */
-    List<PoolQuantity> selectBestPools(Consumer consumer,
-        String[] productIds, List<Pool> pools, ComplianceStatus compliance,
-        String serviceLevelOverride, Set<String> exemptList)
-        throws RuleExecutionException;
-
+    ValidationResult preEntitlement(Consumer consumer, Pool entitlementPool,
+        Integer quantity);
 
     /**
      * Run pre-entitlement checks.
@@ -88,9 +78,20 @@ public interface Enforcer {
      *
      * @param consumer Consumer who wishes to consume an entitlement.
      * @param entitlementPool Entitlement pool to consume from.
-     * @return TODO
+     * @param quantity number of entitlements to consume.
+     * @param caller the context calling the rules.
+     * @return {@link ValidationResult} a validation result from the pre-entitlement run.
      */
-    PreUnbindHelper preUnbind(Consumer consumer, Pool entitlementPool);
+    ValidationResult preEntitlement(Consumer consumer, Pool entitlementPool,
+        Integer quantity, CallerType caller);
+    /**
+     * Run post-entitlement actions.
+     *
+     * @param postEntHelper A post entitlement helper.
+     * @param ent The entitlement that was just granted.
+     * @return post-entitlement processor
+     */
+    PoolHelper postEntitlement(Consumer c, PoolHelper postEntHelper, Entitlement ent);
 
     /**
      * Run post-entitlement actions.

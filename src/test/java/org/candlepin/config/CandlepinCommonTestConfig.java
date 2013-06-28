@@ -24,15 +24,16 @@ import java.util.TreeMap;
 public class CandlepinCommonTestConfig extends Config {
 
     public CandlepinCommonTestConfig() {
-        // explicitly _not_ using the /etc/candlepin/candlepin.conf file in testing.
-        this.configuration = new TreeMap<String, String>(
-            ConfigProperties.DEFAULT_PROPERTIES);
+        super(new TreeMap<String, String>());
+        // be very careful not to invoke the default Config ctor here
+        // because it will read in your /etc/candlepin/candlepin.conf
+        // which we do not want in our testing framework.
         this.configuration.putAll(loadProperties());
     }
 
     @Override
     protected Map<String, String> loadProperties() {
-        Map<String, String> properties = super.loadProperties();
+        Map<String, String> properties = new TreeMap<String, String>();
 
         // set ssl cert/key path for testing
         try {
@@ -40,7 +41,8 @@ public class CandlepinCommonTestConfig extends Config {
             String key = getClass().getResource("candlepin-ca.key").toURI().getPath();
 
             properties.put(ConfigProperties.CA_CERT, cert);
-            properties.put(ConfigProperties.CA_CERT_UPSTREAM, cert);
+            properties.put(ConfigProperties.CA_CERT_UPSTREAM,
+                "target/test/resources/certs/upstream");
             properties.put(ConfigProperties.CA_KEY, key);
         }
         catch (URISyntaxException e) {

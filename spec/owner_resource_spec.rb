@@ -63,6 +63,18 @@ describe 'Owner Resource' do
     pools.length.should == 1
   end
 
+  it "lets owners list pools in pages" do
+    owner = create_owner random_string("test_owner1")
+    product = create_product
+    (1..4).each do |i|
+      @cp.create_subscription(owner['key'], product.id, 10)
+    end
+    @cp.refresh_pools(owner['key'])
+    pools = @cp.list_owner_pools(owner['key'], {:page => 1, :per_page => 2, :sort_by => "id", :order => "asc"})
+    pools.length.should == 2
+    (pools[0].id <=> pools[1].id).should == -1
+  end
+
   it "lets owners be created and refreshed at the same time" do
     owner_key = random_string("new_owner1")
     @cp.refresh_pools(owner_key, false, true)
@@ -257,4 +269,18 @@ describe 'Owner Resource' do
     levels[0].should == 'VIP'
   end
 
+  it 'should return calculated attributes' do
+    owner = create_owner random_string("owner1")
+    product = create_product(random_string("test_id"),
+      random_string("test_name"))
+    @cp.create_subscription(owner['key'], product.id, 10)
+    @cp.refresh_pools(owner['key'])
+
+    user = user_client(owner, "billy")
+    system = consumer_client(user, "system")
+
+    pools = @cp.list_owner_pools(owner['key'], {:consumer => system.uuid})
+    pool = pools.select { |p| p['owner']['key'] == owner['key'] }.first
+    pool['calculatedAttributes']['suggested_quantity'].should == "1"
+  end
 end

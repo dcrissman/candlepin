@@ -35,7 +35,7 @@ import org.candlepin.auth.ConsumerPrincipal;
 import org.candlepin.auth.Principal;
 import org.candlepin.auth.UserPrincipal;
 import org.candlepin.auth.permissions.Permission;
-import org.candlepin.config.Config;
+import org.candlepin.config.CandlepinCommonTestConfig;
 import org.candlepin.exceptions.BadRequestException;
 import org.candlepin.exceptions.ForbiddenException;
 import org.candlepin.model.Consumer;
@@ -324,7 +324,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         consumerResource.unbindBySerial(consumer.getUuid(), serials.get(0)
             .getSerial().getId());
         assertEquals(0,
-            consumerResource.listEntitlements(consumer.getUuid(), null).size());
+            consumerResource.listEntitlements(consumer.getUuid(), null, null).size());
     }
 
     @Test(expected = ForbiddenException.class)
@@ -422,7 +422,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         setupPrincipal(new ConsumerPrincipal(consumer));
         securityInterceptor.enable();
 
-        consumerResource.list(null, null, null);
+        consumerResource.list(null, null, null, null);
     }
 
     @Test
@@ -438,7 +438,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         securityInterceptor.enable();
 
         assertEquals(3,
-            consumerResource.listEntitlements(consumer.getUuid(), null).size());
+            consumerResource.listEntitlements(consumer.getUuid(), null, null).size());
     }
 
     @Test(expected = ForbiddenException.class)
@@ -457,7 +457,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         setupPrincipal(new ConsumerPrincipal(evilConsumer));
         securityInterceptor.enable();
 
-        consumerResource.listEntitlements(consumer.getUuid(), null);
+        consumerResource.listEntitlements(consumer.getUuid(), null, null);
     }
 
     @Test(expected = ForbiddenException.class)
@@ -475,7 +475,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         securityInterceptor.enable();
         setupPrincipal(evilOwner, Access.ALL);
 
-        consumerResource.listEntitlements(consumer.getUuid(), null);
+        consumerResource.listEntitlements(consumer.getUuid(), null, null);
     }
 
     @Test
@@ -490,7 +490,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         securityInterceptor.enable();
 
         assertEquals(3,
-            consumerResource.listEntitlements(consumer.getUuid(), null).size());
+            consumerResource.listEntitlements(consumer.getUuid(), null, null).size());
     }
 
     @Test
@@ -540,7 +540,7 @@ public class ConsumerResourceIntegrationTest extends DatabaseTestFixture {
         ConsumerResource cr = new ConsumerResource(this.consumerCurator, null,
             null, null, this.entitlementCurator, null, null, null, null, null,
             null, null, null, null, this.poolManager, null, null, null, null,
-            null, null, null, null, null, new Config());
+            null, null, null, null, null, new CandlepinCommonTestConfig());
 
         Response rsp = consumerResource.bind(
             consumer.getUuid(), pool.getId().toString(), null, 1, null,

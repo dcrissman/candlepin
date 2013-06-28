@@ -14,15 +14,12 @@
  */
 package org.candlepin.test;
 
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.HashSet;
-
-import javax.persistence.EntityManager;
-import javax.persistence.EntityManagerFactory;
-import javax.servlet.http.HttpServletRequest;
+import com.google.inject.Guice;
+import com.google.inject.Injector;
+import com.google.inject.Module;
+import com.google.inject.persist.PersistFilter;
+import com.google.inject.persist.UnitOfWork;
+import com.google.inject.util.Modules;
 
 import org.candlepin.CandlepinCommonTestingModule;
 import org.candlepin.CandlepinNonServletEnvironmentTestingModule;
@@ -55,8 +52,8 @@ import org.candlepin.model.OwnerCurator;
 import org.candlepin.model.OwnerPermission;
 import org.candlepin.model.OwnerPermissionCurator;
 import org.candlepin.model.Pool;
-import org.candlepin.model.PoolCurator;
 import org.candlepin.model.PoolAttributeCurator;
+import org.candlepin.model.PoolCurator;
 import org.candlepin.model.Product;
 import org.candlepin.model.ProductAttribute;
 import org.candlepin.model.ProductAttributeCurator;
@@ -84,13 +81,15 @@ import org.junit.After;
 import org.junit.Before;
 import org.xnap.commons.i18n.I18n;
 
-import com.google.inject.Guice;
-import com.google.inject.Injector;
-import com.google.inject.Module;
-import com.google.inject.util.Modules;
-import com.google.inject.persist.PersistFilter;
-import com.google.inject.persist.PersistService;
-import com.google.inject.persist.UnitOfWork;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashSet;
+
+import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
+import javax.servlet.http.HttpServletRequest;
 
 /**
  * Test fixture for test classes requiring access to the database.
@@ -99,6 +98,7 @@ public class DatabaseTestFixture {
 
     private static final String DEFAULT_CONTRACT = "SUB349923";
     private static final String DEFAULT_ACCOUNT = "ACC123";
+    private static final String DEFAULT_ORDER = "ORD222";
 
     protected EntityManagerFactory emf;
     protected Injector injector;
@@ -140,8 +140,6 @@ public class DatabaseTestFixture {
     protected UeberCertificateGenerator ueberCertGenerator;
     protected CandlepinSingletonScope cpSingletonScope;
 
-    private PersistService persistanceService;
-
     @Before
     public void init() {
         Module guiceOverrideModule = getGuiceOverrideModule();
@@ -149,8 +147,6 @@ public class DatabaseTestFixture {
         if (guiceOverrideModule == null) {
             injector = Guice.createInjector(testingModule,
                 new CandlepinNonServletEnvironmentTestingModule());
-              //  PersistService.usingJpa().across(UnitOfWork.REQUEST)
-//                    .buildModule());
         }
         else {
             injector = Guice.createInjector(Modules.override(testingModule)
@@ -164,7 +160,6 @@ public class DatabaseTestFixture {
         // Exit the scope to make sure that it is clean before starting the test.
         cpSingletonScope.exit();
         cpSingletonScope.enter();
-        persistanceService = injector.getInstance(PersistService.class);
 
         injector.getInstance(EntityManagerFactory.class);
         emf = injector.getProvider(EntityManagerFactory.class).get();
@@ -275,7 +270,7 @@ public class DatabaseTestFixture {
         Long quantity, Date startDate, Date endDate) {
         Pool p = new Pool(owner, product.getId(), product.getName(),
             new HashSet<ProvidedProduct>(), quantity, startDate, endDate,
-            DEFAULT_CONTRACT, DEFAULT_ACCOUNT);
+            DEFAULT_CONTRACT, DEFAULT_ACCOUNT, DEFAULT_ORDER);
         Subscription sub = new Subscription(owner, product,
             new HashSet<Product>(), quantity, startDate, endDate,
             TestUtil.createDate(2010, 2, 12));

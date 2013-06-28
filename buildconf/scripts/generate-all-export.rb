@@ -6,9 +6,7 @@
 #
 # None of the above will be cleaned up.
 
-require "rubygems"
-require "ruby-debug"
-require  "client/ruby/candlepin_api"
+require  "../../client/ruby/candlepin_api"
 require 'pp'
 
 ADMIN_USERNAME = "admin"
@@ -21,13 +19,21 @@ def random_string prefix=nil
   return "#{prefix}-#{rand(100000)}"
 end
 
-cp = Candlepin.new(ADMIN_USERNAME, ADMIN_PASSWORD, nil, nil, HOST, PORT)
-owner = cp.get_owner('admin')
+if ARGV.length != 1 then
+  abort("USAGE: generate-all-export.rb <OWNERKEY>")
+end
 
+
+cp = Candlepin.new(ADMIN_USERNAME, ADMIN_PASSWORD, nil, nil, HOST, PORT)
+owner = cp.get_owner(ARGV[0])
+
+capabilities = ["cores", "instance_multiplier", "ram"]
 consumer = cp.register(random_string('dummyconsumer'), "candlepin",
-  nil, {}, nil)
-consumer_cp = Candlepin.new(nil, nil, consumer['idCert']['cert'], consumer['idCert']['key'],
-  HOST, PORT)
+  nil, {"system.certificate_version" => "3.9"}, nil, owner['key'],
+  [], [], nil, capabilities)
+
+consumer_cp = Candlepin.new(nil, nil, consumer['idCert']['cert'],
+  consumer['idCert']['key'], HOST, PORT)
 
 pools = cp.list_pools(:owner => owner['id'])
 for p in pools

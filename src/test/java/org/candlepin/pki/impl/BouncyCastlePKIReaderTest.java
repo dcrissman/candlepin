@@ -36,13 +36,13 @@ public class BouncyCastlePKIReaderTest {
                     put(ConfigProperties.CA_CERT,
                         "target/test/resources/certs/test.crt");
                     put(ConfigProperties.CA_CERT_UPSTREAM,
-                        "target/test/resources/certs/testup.crt");
+                        "target/test/resources/certs/upstream");
                     put(ConfigProperties.CA_KEY,
                         "target/test/resources/keys/DEStestkey.pem");
                     put(ConfigProperties.CA_KEY_PASSWORD, "dog8code");
                 }
             });
-        BouncyCastlePKIReader pki = new BouncyCastlePKIReader(config);
+        new BouncyCastlePKIReader(config);
     }
 
 }

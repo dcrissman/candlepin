@@ -92,13 +92,12 @@ public class ConfigProperties {
     public static final String CONSUMER_PERSON_NAME_PATTERN =
          "candlepin.consumer_person_name_pattern";
 
-    public static final String WEBAPP_PREFIX = "candlepin.export.webapp.prefix";
+    public static final String PREFIX_WEBURL = "candlepin.export.prefix.weburl";
+    public static final String PREFIX_APIURL = "candlepin.export.prefix.apiurl";
     public static final String PASSPHRASE_SECRET_FILE =
         "candlepin.passphrase.path";
 
     public static final String PRODUCT_CACHE_MAX = "candlepin.cache.product_cache_max";
-
-    public static final String ENABLE_CERT_V3 = "candlepin.enable_cert_v3";
 
     public static final String INTEGER_FACTS =
         "candlepin.integer_facts";
@@ -114,7 +113,6 @@ public class ConfigProperties {
         "lscpu.core(s)_per_socket," +
         "lscpu.cpu(s)," +
         "lscpu.numa_node(s)," +
-        "lscpu.numa_node0_cpu(s)," +
         "lscpu.socket(s)," +
         "lscpu.thread(s)_per_core";
 
@@ -127,7 +125,8 @@ public class ConfigProperties {
     private static final String NON_NEG_INTEGER_ATTRIBUTE_LIST =
         "sockets," +
         "warning_period," +
-        "ram";
+        "ram," +
+        "cores";
 
     public static final String LONG_ATTRIBUTES =
         "candlepin.long_attributes";
@@ -153,13 +152,12 @@ public class ConfigProperties {
 
                 this.put(CA_KEY, "/etc/candlepin/certs/candlepin-ca.key");
                 this.put(CA_CERT, "/etc/candlepin/certs/candlepin-ca.crt");
-                this.put(CA_CERT_UPSTREAM,
-                    "/etc/candlepin/certs/candlepin-upstream-ca.crt");
+                this.put(CA_CERT_UPSTREAM, "/etc/candlepin/certs/upstream");
 
                 this.put(ACTIVATION_DEBUG_PREFIX, "");
 
                 this.put(HORNETQ_BASE_DIR, "/var/lib/candlepin/hornetq");
-                this.put(HORNETQ_LARGE_MSG_SIZE, new Integer(10 * 1024).toString());
+                this.put(HORNETQ_LARGE_MSG_SIZE, Integer.toString(10 * 1024));
                 this.put(AUDIT_LISTENERS,
                     "org.candlepin.audit.DatabaseListener," +
                         "org.candlepin.audit.LoggingListener," +
@@ -185,6 +183,8 @@ public class ConfigProperties {
                 this.put(FAIL_ON_UNKNOWN_IMPORT_PROPERTIES, "false");
 
                 // Pinsetter
+                // prevent Quartz from checking for updates
+                this.put("org.quartz.scheduler.skipUpdateCheck", "true");
                 this.put("org.quartz.threadPool.class",
                     "org.quartz.simpl.SimpleThreadPool");
                 this.put("org.quartz.threadPool.threadCount", "15");
@@ -209,7 +209,8 @@ public class ConfigProperties {
                 this.put(CONSUMER_PERSON_NAME_PATTERN,
                     "[\\#\\?\\'\\`\\!@{}()\\[\\]\\?&\\w-\\.]+");
 
-                this.put(WEBAPP_PREFIX, "localhost:8443/candlepin");
+                this.put(PREFIX_WEBURL, "localhost:8443/candlepin");
+                this.put(PREFIX_APIURL, "localhost:8443/candlepin");
                 this.put(PASSPHRASE_SECRET_FILE,
                     "/etc/katello/secure/passphrase");
 
@@ -221,10 +222,6 @@ public class ConfigProperties {
                  */
                 this.put(PRODUCT_CACHE_MAX, "100");
 
-                /**
-                 * By default, disable cert v3.
-                 */
-                this.put(ENABLE_CERT_V3, "false");
                 /**
                  * As we do math on some facts and attributes, we need to constrain
                  * some values

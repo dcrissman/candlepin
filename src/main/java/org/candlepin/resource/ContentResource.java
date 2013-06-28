@@ -97,10 +97,7 @@ public class ContentResource {
     @POST
     @Produces(MediaType.APPLICATION_JSON)
     public Content createContent(Content content) {
-        if (content.getGpgUrl() == null) {
-            content.setGpgUrl("");
-        }
-
+        // FIXME: check if arches have changed
         if (content.getId() == null || content.getId().trim().length() == 0) {
             content.setId(idGenerator.generateId());
             return contentCurator.create(content);
@@ -110,6 +107,7 @@ public class ContentResource {
         if (lookedUp != null) {
             return lookedUp;
         }
+
         return contentCurator.create(content);
     }
 
@@ -124,6 +122,7 @@ public class ContentResource {
                 i18n.tr("Content with id {0} could not be found.", contentId));
         }
 
+        // FIXME: needs arches handled as well?
         changes.setId(contentId);
         Content updated = contentCurator.createOrUpdate(changes);
         // require regeneration of entitlement certificates of affected consumers

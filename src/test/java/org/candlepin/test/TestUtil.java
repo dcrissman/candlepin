@@ -14,6 +14,16 @@
  */
 package org.candlepin.test;
 
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
+
+import org.apache.commons.codec.binary.Base64;
 import org.candlepin.auth.Access;
 import org.candlepin.auth.UserPrincipal;
 import org.candlepin.auth.permissions.Permission;
@@ -31,18 +41,12 @@ import org.candlepin.model.Pool;
 import org.candlepin.model.Product;
 import org.candlepin.model.ProductAttribute;
 import org.candlepin.model.ProvidedProduct;
+import org.candlepin.model.RulesCurator;
 import org.candlepin.model.Subscription;
 import org.candlepin.model.User;
-
-import org.apache.commons.codec.binary.Base64;
-
-import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Random;
-import java.util.Set;
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.JsonProcessingException;
+import org.codehaus.jackson.map.ObjectMapper;
 
 /**
  * TestUtil for creating various testing objects. Objects backed by the database
@@ -89,7 +93,7 @@ public class TestUtil {
     private static final Random RANDOM = new Random(System.currentTimeMillis());
 
     public static int randomInt() {
-        return RANDOM.nextInt(10000);
+        return Math.abs(RANDOM.nextInt());
     }
 
     public static Product createProduct(String id, String name) {
@@ -159,7 +163,7 @@ public class TestUtil {
         Pool pool = new Pool(owner, product.getId(), product.getName(),
             providedProducts, Long.valueOf(quantity), TestUtil.createDate(2009,
                 11, 30), TestUtil.createDate(2015, 11, 30), "SUB234598S",
-            "ACC123");
+            "ACC123", "ORD222");
 
         // Simulate copying product attributes to the pool.
         if (product != null) {
@@ -287,4 +291,19 @@ public class TestUtil {
         return key;
     }
 
+    /*
+     * Creates a fake rules blob with a version that matches the current API number.
+     */
+    public static String createRulesBlob(int minorVersion) {
+        return "// Version: " + RulesCurator.RULES_API_VERSION + "." + minorVersion +
+            "\n//somerules";
+    }
+
+    public static boolean isJsonEqual(String one, String two)
+        throws JsonProcessingException, IOException {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode tree1 = mapper.readTree(one);
+        JsonNode tree2 = mapper.readTree(two);
+        return tree1.equals(tree2);
+    }
 }

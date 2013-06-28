@@ -30,6 +30,7 @@ import org.apache.commons.lang.builder.EqualsBuilder;
 import org.apache.commons.lang.builder.HashCodeBuilder;
 import org.candlepin.service.UniqueIdGenerator;
 import org.hibernate.annotations.CollectionOfElements;
+import org.hibernate.annotations.Type;
 
 /**
  * ProductContent
@@ -60,6 +61,7 @@ public class Content extends AbstractHibernateObject {
     private String vendor;
 
     @Column(nullable = true)
+    @Type(type = "org.candlepin.hibernate.EmptyStringUserType")
     private String contentUrl;
 
     @Column(nullable = true)
@@ -71,6 +73,7 @@ public class Content extends AbstractHibernateObject {
 
     // attribute?
     @Column(nullable = true)
+    @Type(type = "org.candlepin.hibernate.EmptyStringUserType")
     private String gpgUrl;
 
     @Column(nullable = true)
@@ -80,8 +83,11 @@ public class Content extends AbstractHibernateObject {
     @JoinTable(name = "cp_content_modified_products")
     private Set<String> modifiedProductIds = new HashSet<String>();
 
+    @Column(nullable = true)
+    private String arches;
+
     public Content(String name, String id, String label, String type,
-        String vendor, String contentUrl, String gpgUrl) {
+        String vendor, String contentUrl, String gpgUrl, String arches) {
         setName(name);
         setId(id);
         setLabel(label);
@@ -89,6 +95,7 @@ public class Content extends AbstractHibernateObject {
         setVendor(vendor);
         setContentUrl(contentUrl);
         setGpgUrl(gpgUrl);
+        setArches(arches);
     }
 
     public Content() {
@@ -100,7 +107,7 @@ public class Content extends AbstractHibernateObject {
         return new Content(
             UEBER_CONTENT_NAME, idGenerator.generateId(),
             ueberContentLabelForProduct(p), "yum", "Custom",
-            "/" + o.getKey(), "");
+            "/" + o.getKey(), "", "");
     }
 
     /*
@@ -247,6 +254,14 @@ public class Content extends AbstractHibernateObject {
         return releaseVer;
     }
 
+    public void setArches(String arches) {
+        this.arches = arches;
+    }
+
+    public String getArches() {
+        return arches;
+    }
+
     /**
      * @param from Content object to copy properties from.
      * @return current Content object with updated properites
@@ -263,6 +278,7 @@ public class Content extends AbstractHibernateObject {
         setMetadataExpire(from.getMetadataExpire());
         setModifiedProductIds(defaultIfNull(from.getModifiedProductIds(),
             new HashSet<String>()));
+        setArches(from.getArches());
 
         return this;
     }
@@ -270,4 +286,5 @@ public class Content extends AbstractHibernateObject {
     private <T> T defaultIfNull(T val, T dflt) {
         return val == null ? dflt : val;
     }
+
 }

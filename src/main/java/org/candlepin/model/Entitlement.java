@@ -33,7 +33,6 @@ import javax.xml.bind.annotation.XmlRootElement;
 import javax.xml.bind.annotation.XmlTransient;
 
 import org.candlepin.jackson.HateoasInclude;
-import org.candlepin.jackson.SkipExport;
 import org.codehaus.jackson.map.annotate.JsonFilter;
 import org.hibernate.annotations.ForeignKey;
 import org.hibernate.annotations.GenericGenerator;
@@ -61,7 +60,7 @@ import org.hibernate.annotations.Index;
 @XmlAccessorType(XmlAccessType.PROPERTY)
 @Entity
 @Table(name = "cp_entitlement")
-@JsonFilter("ApiHateoas")
+@JsonFilter("EntitlementFilter")
 public class Entitlement extends AbstractHibernateObject implements Linkable, Owned {
 
     private static final long serialVersionUID = 1L;
@@ -100,9 +99,6 @@ public class Entitlement extends AbstractHibernateObject implements Linkable, Ow
         new HashSet<EntitlementCertificate>();
 
     private Integer quantity;
-
-    private String accountNumber;
-    private String contractNumber;
 
     private boolean dirty = false;
 
@@ -143,9 +139,6 @@ public class Entitlement extends AbstractHibernateObject implements Linkable, Ow
         endDate = endDateIn;
         quantity = quantityIn == null || quantityIn.intValue() < 1 ?
             1 : quantityIn;
-
-        this.accountNumber = pool.getAccountNumber();
-        this.contractNumber = pool.getContractNumber();
     }
 
     /**
@@ -219,7 +212,6 @@ public class Entitlement extends AbstractHibernateObject implements Linkable, Ow
     /**
      * @return return the associated Consumer
      */
-    @SkipExport
     public Consumer getConsumer() {
         return consumer;
     }
@@ -271,22 +263,6 @@ public class Entitlement extends AbstractHibernateObject implements Linkable, Ow
          */
     }
 
-    public String getAccountNumber() {
-        return accountNumber;
-    }
-
-    public void setAccountNumber(String accountNumber) {
-        this.accountNumber = accountNumber;
-    }
-
-    public String getContractNumber() {
-        return contractNumber;
-    }
-
-    public void setContractNumber(String contractNumber) {
-        this.contractNumber = contractNumber;
-    }
-
     @Override
     public boolean equals(Object obj) {
         if (this == obj) {
@@ -320,4 +296,13 @@ public class Entitlement extends AbstractHibernateObject implements Linkable, Ow
         this.dirty = dirty;
     }
 
+    @XmlTransient
+    public boolean isValidOnDate(Date d) {
+        return d.after(this.getStartDate()) && d.before(this.getEndDate());
+    }
+
+    @XmlTransient
+    public boolean isValid() {
+        return this.isValidOnDate(new Date());
+    }
 }

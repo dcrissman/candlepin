@@ -14,31 +14,6 @@
  */
 package org.candlepin.resource;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.StringTokenizer;
-
-import javax.ws.rs.Consumes;
-import javax.ws.rs.DELETE;
-import javax.ws.rs.DefaultValue;
-import javax.ws.rs.GET;
-import javax.ws.rs.POST;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.MultivaluedMap;
-
-import org.apache.log4j.Logger;
 import org.candlepin.audit.Event;
 import org.candlepin.audit.EventAdapter;
 import org.candlepin.audit.EventFactory;
@@ -49,15 +24,16 @@ import org.candlepin.auth.interceptor.Verify;
 import org.candlepin.controller.PoolManager;
 import org.candlepin.exceptions.BadRequestException;
 import org.candlepin.exceptions.CandlepinException;
+import org.candlepin.exceptions.ForbiddenException;
 import org.candlepin.exceptions.IseException;
 import org.candlepin.exceptions.NotFoundException;
 import org.candlepin.model.ActivationKey;
 import org.candlepin.model.ActivationKeyCurator;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.ConsumerCurator;
+import org.candlepin.model.ConsumerInstalledProduct;
 import org.candlepin.model.ConsumerType;
 import org.candlepin.model.ConsumerTypeCurator;
-import org.candlepin.model.ContentCurator;
 import org.candlepin.model.Entitlement;
 import org.candlepin.model.EntitlementCertificate;
 import org.candlepin.model.EntitlementCertificateCurator;
@@ -82,28 +58,59 @@ import org.candlepin.model.StatisticCurator;
 import org.candlepin.model.Subscription;
 import org.candlepin.model.SubscriptionCurator;
 import org.candlepin.model.UeberCertificateGenerator;
+import org.candlepin.model.UpstreamConsumer;
+import org.candlepin.paging.Page;
+import org.candlepin.paging.PageRequest;
+import org.candlepin.paging.Paginate;
+import org.candlepin.pinsetter.tasks.EntitlerJob;
 import org.candlepin.pinsetter.tasks.RefreshPoolsJob;
+import org.candlepin.resource.util.CalculatedAttributesUtil;
 import org.candlepin.resource.util.ResourceDateParser;
-import org.candlepin.service.ProductServiceAdapter;
 import org.candlepin.service.SubscriptionServiceAdapter;
-import org.candlepin.service.UniqueIdGenerator;
-import org.candlepin.sync.ConsumerDto;
 import org.candlepin.sync.ConflictOverrides;
+import org.candlepin.sync.ConsumerDto;
 import org.candlepin.sync.Importer;
 import org.candlepin.sync.ImporterException;
 import org.candlepin.sync.Meta;
 import org.candlepin.sync.SyncDataFormatException;
-import org.jboss.resteasy.annotations.providers.jaxb.Wrapped;
-import org.jboss.resteasy.plugins.providers.atom.Feed;
-import org.jboss.resteasy.plugins.providers.multipart.InputPart;
-import org.jboss.resteasy.plugins.providers.multipart.MultipartInput;
-import org.jboss.resteasy.util.GenericType;
-import org.quartz.JobDetail;
-import org.xnap.commons.i18n.I18n;
 
 import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
 
+import org.apache.log4j.Logger;
+import org.jboss.resteasy.annotations.providers.jaxb.Wrapped;
+import org.jboss.resteasy.plugins.providers.atom.Feed;
+import org.jboss.resteasy.plugins.providers.multipart.InputPart;
+import org.jboss.resteasy.plugins.providers.multipart.MultipartInput;
+import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.jboss.resteasy.util.GenericType;
+import org.quartz.JobDetail;
+import org.xnap.commons.i18n.I18n;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.StringTokenizer;
+
+import javax.ws.rs.Consumes;
+import javax.ws.rs.DELETE;
+import javax.ws.rs.DefaultValue;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.MultivaluedMap;
 
 /**
  * Owner Resource
@@ -135,6 +142,8 @@ public class OwnerResource {
     private EntitlementCurator entitlementCurator;
     private UeberCertificateGenerator ueberCertGenerator;
     private EnvironmentCurator envCurator;
+    private CalculatedAttributesUtil calculatedAttributesUtil;
+
     private static final int FEED_LIMIT = 1000;
 
     @Inject
@@ -152,12 +161,10 @@ public class OwnerResource {
         SubscriptionServiceAdapter subService,
         OwnerPermissionCurator permCurator,
         ConsumerTypeCurator consumerTypeCurator,
-        ProductServiceAdapter prodAdapter,
-        ContentCurator contentCurator,
         EntitlementCertificateCurator entitlementCertCurator,
-        EntitlementCurator entitlementCurator, UniqueIdGenerator idGenerator,
+        EntitlementCurator entitlementCurator,
         UeberCertificateGenerator ueberCertGenerator,
-        EnvironmentCurator envCurator) {
+        EnvironmentCurator envCurator, CalculatedAttributesUtil calculatedAttributesUtil) {
 
         this.ownerCurator = ownerCurator;
         this.ownerInfoCurator = ownerInfoCurator;
@@ -182,6 +189,7 @@ public class OwnerResource {
         this.entitlementCurator = entitlementCurator;
         this.ueberCertGenerator = ueberCertGenerator;
         this.envCurator = envCurator;
+        this.calculatedAttributesUtil = calculatedAttributesUtil;
     }
 
     /**
@@ -393,6 +401,43 @@ public class OwnerResource {
     }
 
     /**
+     * Starts an asynchronous healing for the given Owner. At the end of the
+     * process the idea is that all of the consumers in the owned by the Owner
+     * will be up to date.
+     *
+     * @param ownerKey id of the owner to be healed.
+     * @return the status of the pending job
+     * @httpcode 404
+     * @httpcode 202
+     */
+    @POST
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("{owner_key}/entitlements")
+    public JobDetail[] healEntire(
+        @PathParam("owner_key") @Verify(Owner.class) String ownerKey) {
+
+        List<JobDetail> details = new LinkedList<JobDetail>();
+        Owner owner = findOwner(ownerKey);
+        Set<Consumer> consumers = owner.getConsumers();
+
+        for (Consumer consumer : consumers) {
+            // would be nice to just get the ids but it is what it is
+            Set<ConsumerInstalledProduct> products = consumer.getInstalledProducts();
+
+            // TODO: write a google Function to map this
+            String[] pids = new String[products.size()];
+            int i = 0;
+            for (ConsumerInstalledProduct cip : products) {
+                pids[i++] = cip.getProductId();
+            }
+            details.add(
+                EntitlerJob.bindByProducts(pids, consumer.getUuid(), new Date()));
+        }
+
+        return details.toArray(new JobDetail[details.size()]);
+    }
+
+    /**
      * Return the support levels for the owner of the given id.
      *
      * @param ownerKey id of the owner whose support levels are sought.
@@ -527,10 +572,12 @@ public class OwnerResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("{owner_key}/consumers")
+    @Paginate
     public List<Consumer> ownerConsumers(
         @PathParam("owner_key") @Verify(Owner.class) String ownerKey,
         @QueryParam("username") String userName,
-        @QueryParam("type") String typeLabel) {
+        @QueryParam("type") String typeLabel,
+        @Context PageRequest pageRequest) {
 
         Owner owner = findOwner(ownerKey);
 
@@ -542,7 +589,12 @@ public class OwnerResource {
 
         // We don't look up the user and warn if it doesn't exist here to not
         // give away usernames
-        return consumerCurator.listByUsernameAndType(userName, type, owner);
+        Page<List<Consumer>> p = consumerCurator.listByUsernameAndType(userName,
+            type, owner, pageRequest);
+
+        // Store the page for the LinkHeaderPostInterceptor
+        ResteasyProviderFactory.pushContext(Page.class, p);
+        return p.getPageData();
     }
 
     private ConsumerType lookupConsumerType(String label) {
@@ -568,13 +620,16 @@ public class OwnerResource {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("{owner_key}/pools")
+    @Paginate
     public List<Pool> getPools(
         @PathParam("owner_key")
             @Verify(value = Owner.class, require = Access.READ_POOLS) String ownerKey,
         @QueryParam("consumer") String consumerUuid,
         @QueryParam("product") String productId,
         @QueryParam("listall") @DefaultValue("false") boolean listAll,
-        @QueryParam("activeon") String activeOn) {
+        @QueryParam("activeon") String activeOn,
+        @Context Principal principal,
+        @Context PageRequest pageRequest) {
 
         Owner owner = findOwner(ownerKey);
 
@@ -590,13 +645,32 @@ public class OwnerResource {
                 throw new NotFoundException(i18n.tr("consumer: {0} not found",
                     consumerUuid));
             }
+
             if (!c.getOwner().getId().equals(owner.getId())) {
                 throw new BadRequestException(
                     "Consumer specified does not belong to owner on path");
             }
+
+            if (!principal.canAccess(c, Access.READ_ONLY)) {
+                throw new ForbiddenException(i18n.tr("User {0} cannot access consumer {1}",
+                    principal.getPrincipalName(), c.getUuid()));
+            }
         }
-        return poolCurator.listAvailableEntitlementPools(c, owner, productId,
-            activeOnDate, true, listAll);
+
+        Page<List<Pool>> page = poolCurator.listAvailableEntitlementPools(c, owner,
+            productId, activeOnDate, true, listAll, pageRequest);
+        List<Pool> poolList = page.getPageData();
+
+        if (c != null) {
+            for (Pool p : poolList) {
+                p.setCalculatedAttributes(
+                    calculatedAttributesUtil.buildCalculatedAttributes(p, c));
+            }
+        }
+
+        // Store the page for the LinkHeaderPostInterceptor
+        ResteasyProviderFactory.pushContext(Page.class, page);
+        return poolList;
     }
 
     /**
@@ -862,7 +936,7 @@ public class OwnerResource {
         }
 
         // Clear out upstream ID so owner can import from other distributors:
-        owner.setUpstreamUuid(null);
+        owner.setUpstreamConsumer(null);
 
         ExporterMetadata metadata = exportCurator.lookupByTypeAndOwner(
             ExporterMetadata.TYPE_PER_USER, owner);
@@ -1144,6 +1218,32 @@ public class OwnerResource {
         return ueberCertificate.get(0);
     }
 
+    /**
+     * @return a List of UpstreamConsumer for the given Owner
+     * @httpcode 404
+     * @httpcode 200
+     */
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("{owner_key}/upstream_consumers")
+    public List<UpstreamConsumer> getUpstreamConsumers(@Context Principal principal,
+        @Verify(Owner.class) @PathParam("owner_key") String ownerKey) {
+        Owner o = findOwner(ownerKey);
+        if (o == null) {
+            throw new NotFoundException(i18n.tr(
+                "owner with key: {0} was not found.", ownerKey));
+        }
+
+        // returning as a list for future proofing. today we support one, but
+        // users of this api want to protect against having to change their code
+        // when multiples are supported.
+        UpstreamConsumer upstream = o.getUpstreamConsumer();
+
+        List<UpstreamConsumer> results = new ArrayList<UpstreamConsumer>(1);
+        results.add(upstream);
+        return results;
+    }
+
     private void recordImportSuccess(Owner owner, Map data,
         ConflictOverrides forcedConflicts, String filename) {
 
@@ -1153,14 +1253,9 @@ public class OwnerResource {
         if (meta != null) {
             record.setGeneratedBy(meta.getPrincipalName());
             record.setGeneratedDate(meta.getCreated());
-            record.setWebAppPrefix(meta.getWebAppPrefix());
         }
         if (consumer != null) {
-            record.setUpstreamName(consumer.getName());
             record.setUpstreamId(consumer.getUuid());
-            if (consumer.getType() != null) {
-                record.setUpstreamType(consumer.getType().getLabel());
-            }
         }
         record.setFileName(filename);
 
@@ -1183,12 +1278,9 @@ public class OwnerResource {
         if (meta != null) {
             record.setGeneratedBy(meta.getPrincipalName());
             record.setGeneratedDate(meta.getCreated());
-            record.setWebAppPrefix(meta.getWebAppPrefix());
         }
         if (consumer != null) {
-            record.setUpstreamName(consumer.getName());
             record.setUpstreamId(consumer.getUuid());
-            record.setUpstreamType(consumer.getType().getLabel());
         }
         record.setFileName(filename);
 

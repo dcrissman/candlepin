@@ -29,6 +29,7 @@ import org.candlepin.model.Entitlement;
 import org.candlepin.model.GuestId;
 import org.candlepin.model.Owner;
 import org.candlepin.model.Pool;
+import org.candlepin.model.Rules;
 import org.candlepin.model.Subscription;
 
 import com.google.inject.Inject;
@@ -51,9 +52,13 @@ public class EventFactory {
         // of fields nested objects, so enable the event and API HATEOAS filters:
         SimpleFilterProvider filterProvider = new SimpleFilterProvider();
         filterProvider.setFailOnUnknownId(false);
-        filterProvider = filterProvider.addFilter("EventHateoas",
+        filterProvider = filterProvider.addFilter("PoolFilter",
             new HateoasBeanPropertyFilter());
-        filterProvider = filterProvider.addFilter("ApiHateoas",
+        filterProvider = filterProvider.addFilter("ConsumerFilter",
+            new HateoasBeanPropertyFilter());
+        filterProvider = filterProvider.addFilter("EntitlementFilter",
+            new HateoasBeanPropertyFilter());
+        filterProvider = filterProvider.addFilter("OwnerFilter",
             new HateoasBeanPropertyFilter());
         mapper.setFilters(filterProvider);
 
@@ -71,6 +76,27 @@ public class EventFactory {
             newConsumer.getName(), principal, newConsumer.getOwner().getId(),
             newConsumer.getId(), newConsumer.getId(), null, newEntityJson,
             null, null);
+        return e;
+    }
+
+    public Event rulesUpdated(Rules oldRules, Rules newRules) {
+        String olds = entityToJson(oldRules);
+        String news = entityToJson(newRules);
+        Principal principal = principalProvider.get();
+        Event e = new Event(Event.Type.MODIFIED, Event.Target.RULES,
+            newRules.getVersion(), principal, null,
+            null, "" + (String) newRules.getId(),
+            olds, news, null, null);
+        return e;
+    }
+
+    public Event rulesDeleted(Rules deletedRules) {
+        String oldEntityJson = entityToJson(deletedRules);
+        Principal principal = principalProvider.get();
+        Event e = new Event(Event.Type.DELETED, Event.Target.RULES,
+            deletedRules.getVersion(), principal, null,
+            null, "" + (String) deletedRules.getId(),
+            oldEntityJson, null, null, null);
         return e;
     }
 

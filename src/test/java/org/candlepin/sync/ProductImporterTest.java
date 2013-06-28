@@ -31,7 +31,6 @@ import java.util.HashSet;
 import java.util.Set;
 
 import org.candlepin.config.Config;
-import org.candlepin.controller.CandlepinPoolManager;
 import org.candlepin.model.Content;
 import org.candlepin.model.ContentCurator;
 import org.candlepin.model.Product;
@@ -50,14 +49,12 @@ public class ProductImporterTest {
     private ProductImporter importer;
     private ProductCurator productCuratorMock;
     private ContentCurator contentCuratorMock;
-    private CandlepinPoolManager poolManagerMock;
     @Before
     public void setUp() throws IOException {
         mapper = SyncUtils.getObjectMapper(new Config(new HashMap<String, String>()));
         productCuratorMock = mock(ProductCurator.class);
         contentCuratorMock = mock(ContentCurator.class);
-        poolManagerMock = mock(CandlepinPoolManager.class);
-        importer = new ProductImporter(productCuratorMock, contentCuratorMock, poolManagerMock);
+        importer = new ProductImporter(productCuratorMock, contentCuratorMock);
     }
 
     @Test
@@ -352,8 +349,8 @@ public class ProductImporterTest {
         Product newProduct = TestUtil.createProduct("fake id", "fake name");
         Product oldProduct = TestUtil.createProduct("fake id", "fake name");
 
-        Content content = new Content("foobar", null, null, null, null, null, null);
-        Content content2 = new Content("baz", null, null, null, null, null, null);
+        Content content = new Content("foobar", null, null, null, null, null, null, null);
+        Content content2 = new Content("baz", null, null, null, null, null, null, null);
 
         oldProduct.addContent(content);
         newProduct.addContent(content2);
@@ -375,7 +372,7 @@ public class ProductImporterTest {
         Product newProduct = TestUtil.createProduct("fake id", "fake name");
         Product oldProduct = TestUtil.createProduct("fake id", "fake name");
 
-        Content content = new Content("foobar", null, null, null, null, null, null);
+        Content content = new Content("foobar", null, null, null, null, null, null, null);
 
         oldProduct.addContent(content);
         newProduct.addEnabledContent(content);
@@ -395,7 +392,7 @@ public class ProductImporterTest {
     // Returns the Content object added
     private void addContentTo(Product p) {
         Content c = new Content("name", "100130", "label", "type",
-            "vendor", "url", "gpgurl");
+            "vendor", "url", "gpgurl", "arch");
         c.setMetadataExpire(1000L);
         p.getProductContent().add(new ProductContent(p, c, true));
     }

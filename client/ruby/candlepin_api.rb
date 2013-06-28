@@ -68,14 +68,15 @@ class Candlepin
   # TODO: need to switch to a params hash, getting to be too many arguments.
   def register(name, type=:system, uuid=nil, facts={}, username=nil,
               owner_key=nil, activation_keys=[], installedProducts=[],
-              environment=nil)
+              environment=nil, capabilities=[])
     consumer = {
       :type => {:label => type},
       :name => name,
       :facts => facts,
       :installedProducts => installedProducts
     }
-
+    consumer[:capabilities] = capabilities.collect { |name| {'name' => name} } if capabilities
+ 
     consumer[:uuid] = uuid if not uuid.nil?
 
     if environment.nil?
@@ -102,6 +103,15 @@ class Candlepin
     return result
   end
 
+  def get_deleted_consumers(date = nil)
+    path = get_path("deleted_consumers")
+    if !date.nil?
+        path += "?date=#{date}"
+    end
+    result = get(path)
+    return result
+  end
+
   def update_consumer(params)
     uuid = params[:uuid] || @uuid
 
@@ -115,6 +125,7 @@ class Candlepin
         params[:guestIds] if params[:guestIds]
     consumer[:autoheal] = params[:autoheal] if params.has_key?(:autoheal)
     consumer[:serviceLevel] = params[:serviceLevel] if params.has_key?(:serviceLevel)
+    consumer[:capabilities] = params[:capabilities].collect { |name| {'name' => name} } if params[:capabilities]
 
     path = get_path("consumers")
     put("#{path}/#{uuid}", consumer)
@@ -293,8 +304,10 @@ class Candlepin
     delete("/consumertypes/#{type_id}")
   end
 
-  def get_pool(poolid)
-    get("/pools/#{poolid}")
+  def get_pool(poolid, uuid=nil)
+    path = "/pools/#{poolid}?"
+    path += "consumer=#{uuid}" if uuid
+    get(path)
   end
 
   def delete_pool(pool_id)
@@ -319,8 +332,11 @@ class Candlepin
     path << "consumer=#{params[:consumer]}&" if params[:consumer]
     path << "product=#{params[:product]}&" if params[:product]
     path << "listall=#{params[:listall]}&" if params[:listall]
+    path << "page=#{params[:page]}&" if params[:page]
+    path << "per_page=#{params[:per_page]}&" if params[:per_page]
+    path << "order=#{params[:order]}&" if params[:order]
+    path << "sort_by=#{params[:sort_by]}&" if params[:sort_by]
     results = get(path)
-
     return results
   end
 
@@ -385,6 +401,7 @@ class Candlepin
     metadata_expire = params[:metadata_expire] || nil
     required_tags = params[:required_tags] || nil
     content_url = params[:content_url] || ""
+    arches = params[:arches] || ""
     gpg_url = params[:gpg_url] || ""
     modified_product_ids = params[:modified_products] || []
 
@@ -395,6 +412,7 @@ class Candlepin
       'type' => type,
       'vendor' => vendor,
       'contentUrl' => content_url,
+      'arches' => arches,
       'gpgUrl' => gpg_url,
       'modifiedProductIds' => modified_product_ids
     }
@@ -537,8 +555,12 @@ class Candlepin
   def list_entitlements(params={})
     uuid = params[:uuid] || @uuid
 
-    path = "/consumers/#{uuid}/entitlements"
-    path << "?product=#{params[:product_id]}" if params[:product_id]
+    path = "/consumers/#{uuid}/entitlements?"
+    path << "product=#{params[:product_id]}&" if params[:product_id]
+    path << "page=#{params[:page]}&" if params[:page]
+    path << "per_page=#{params[:per_page]}&" if params[:per_page]
+    path << "order=#{params[:order]}&" if params[:order]
+    path << "sort_by=#{params[:sort_by]}&" if params[:sort_by]
     results = get(path)
     return results
   end
@@ -565,6 +587,10 @@ class Candlepin
 
     query << "username=#{args[:username]}&" if args[:username]
     query << "type=#{args[:type]}&" if args[:type]
+    query << "page=#{args[:page]}&" if args[:page]
+    query << "per_page=#{args[:per_page]}&" if args[:per_page]
+    query << "order=#{args[:order]}&" if args[:order]
+    query << "sort_by=#{args[:sort_by]}&" if args[:sort_by]
     get(query)
   end
 
@@ -872,6 +898,32 @@ class Candlepin
     response = get_client(uri, Net::HTTP::Get, :get)[URI.escape(uri)].get \
       :accept => accept_header
     return JSON.parse(response.body)
+  end
+
+  def create_distributor_version(name, display_name, capabilities=[])
+    version =  {
+      'name' => name,
+      'displayName' => display_name,
+      'capabilities' => capabilities.collect { |name| {'name' => name} }
+    }
+    post('/distributor_versions', version)
+  end
+
+  def update_distributor_version(id, name, display_name, capabilities=[])
+    version =  {
+      'name' => name,
+      'displayName' => display_name,
+      'capabilities' => capabilities.collect { |name| {'name' => name} }
+    }
+    put("/distributor_versions/#{id}", version)
+  end
+
+  def delete_distributor_version(id)
+    delete("/distributor_versions/#{id}")
+  end
+
+  def get_distributor_versions()
+    get("/distributor_versions")
   end
 
   # Assumes a zip archive currently. Returns filename (random#.zip) of the

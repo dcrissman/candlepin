@@ -16,13 +16,16 @@ package org.candlepin.sync;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.io.StringReader;
 
+import org.candlepin.audit.EventSink;
 import org.candlepin.model.Rules;
 import org.candlepin.model.RulesCurator;
-import org.candlepin.util.VersionUtil;
+import org.candlepin.test.DatabaseTestFixture;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -34,21 +37,50 @@ import org.mockito.runners.MockitoJUnitRunner;
  * RulesImporterTest
  */
 @RunWith(MockitoJUnitRunner.class)
-public class RulesImporterTest {
+public class RulesImporterTest extends DatabaseTestFixture {
 
     @Mock private RulesCurator curator;
     private RulesImporter importer;
-    private String RULE = "good bye, cruel world!";
 
     @Before
     public void setUp() {
-        importer = new RulesImporter(curator);
+        importer = new RulesImporter(curator, injector.getInstance(EventSink.class));
     }
 
     @Test
-    public void importRules() throws IOException {
-        importer.importObject(new StringReader(RULE), VersionUtil.getVersionString());
-        verify(curator).update(any(Rules.class)); // TODO: can't get custom matcher to work?
+    public void importNewerRulesSameApi() throws IOException {
+        Rules currentRules = new Rules("//Version: 2.0");
+        when(curator.getRules()).thenReturn(currentRules);
+
+        importer.importObject(new StringReader("//Version: 2.1"));
+        verify(curator).update(any(Rules.class));
+    }
+
+    @Test
+    public void importSkipsOlderRulesSameApi() throws IOException {
+        Rules currentRules = new Rules("// Version: 2.1");
+        when(curator.getRules()).thenReturn(currentRules);
+
+        importer.importObject(new StringReader("// Version: 2.0"));
+        verify(curator, never()).update(any(Rules.class));
+    }
+
+    @Test
+    public void importSkipsOlderRulesDifferentApi() throws IOException {
+        Rules currentRules = new Rules("// Version: 2.1");
+        when(curator.getRules()).thenReturn(currentRules);
+
+        importer.importObject(new StringReader("//Version: 1.0\n//rules"));
+        verify(curator, never()).update(any(Rules.class));
+    }
+
+    @Test
+    public void importSkipsNewerRulesDifferentApi() throws IOException {
+        Rules currentRules = new Rules("// Version: 2.1");
+        when(curator.getRules()).thenReturn(currentRules);
+
+        importer.importObject(new StringReader("//Version: 3.0"));
+        verify(curator, never()).update(any(Rules.class));
     }
 
     static class RulesMatcher extends ArgumentMatcher<Rules> {
@@ -62,4 +94,5 @@ public class RulesImporterTest {
             return ((Rules) rules).getRules().equals(rule);
         }
     }
+
 }

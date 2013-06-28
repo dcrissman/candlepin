@@ -14,7 +14,6 @@
  */
 package org.candlepin.resource;
 
-import org.candlepin.audit.EventSink;
 import org.candlepin.auth.Access;
 import org.candlepin.auth.Principal;
 import org.candlepin.auth.interceptor.SecurityHole;
@@ -31,11 +30,16 @@ import org.candlepin.model.Pool;
 import org.candlepin.model.PoolCurator;
 import org.candlepin.model.Statistic;
 import org.candlepin.model.StatisticCurator;
+import org.candlepin.paging.Page;
+import org.candlepin.paging.PageRequest;
+import org.candlepin.paging.Paginate;
+import org.candlepin.resource.util.CalculatedAttributesUtil;
 import org.candlepin.resource.util.ResourceDateParser;
 
 import com.google.inject.Inject;
 
 import org.jboss.resteasy.annotations.providers.jaxb.Wrapped;
+import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.xnap.commons.i18n.I18n;
 
 import java.util.Date;
@@ -64,12 +68,14 @@ public class PoolResource {
     private StatisticCurator statisticCurator;
     private I18n i18n;
     private PoolManager poolManager;
+    private CalculatedAttributesUtil calculatedAttributesUtil;
 
     @Inject
     public PoolResource(PoolCurator poolCurator,
         ConsumerCurator consumerCurator, OwnerCurator ownerCurator,
         StatisticCurator statisticCurator, I18n i18n,
-        EventSink eventSink, PoolManager poolManager) {
+        PoolManager poolManager,
+        CalculatedAttributesUtil calculatedAttributesUtil) {
 
         this.poolCurator = poolCurator;
         this.consumerCurator = consumerCurator;
@@ -77,6 +83,7 @@ public class PoolResource {
         this.statisticCurator = statisticCurator;
         this.i18n = i18n;
         this.poolManager = poolManager;
+        this.calculatedAttributesUtil = calculatedAttributesUtil;
     }
 
     /**
@@ -104,11 +111,14 @@ public class PoolResource {
     @Wrapped(element = "pools")
     @Deprecated
     @SecurityHole
+    @Paginate
     public List<Pool> list(@QueryParam("owner") String ownerId,
         @QueryParam("consumer") String consumerUuid,
         @QueryParam("product") String productId,
         @QueryParam("listall") @DefaultValue("false") boolean listAll,
-        @QueryParam("activeon") String activeOn, @Context Principal principal) {
+        @QueryParam("activeon") String activeOn,
+        @Context Principal principal,
+        @Context PageRequest pageRequest) {
 
         // Make sure we were given sane query parameters:
         if (consumerUuid != null && ownerId != null) {
@@ -164,8 +174,20 @@ public class PoolResource {
                     principal.getPrincipalName()));
         }
 
-        return poolCurator.listAvailableEntitlementPools(c, o, productId,
-            activeOnDate, true, listAll);
+        Page<List<Pool>> page = poolCurator.listAvailableEntitlementPools(c, o, productId,
+            activeOnDate, true, listAll, pageRequest);
+        List<Pool> poolList = page.getPageData();
+
+        if (c != null) {
+            for (Pool p : poolList) {
+                p.setCalculatedAttributes(
+                    calculatedAttributesUtil.buildCalculatedAttributes(p, c));
+            }
+        }
+
+        // Store the page for the LinkHeaderPostInterceptor
+        ResteasyProviderFactory.pushContext(Page.class, page);
+        return poolList;
     }
 
     /**
@@ -180,10 +202,28 @@ public class PoolResource {
     @GET
     @Path("/{pool_id}")
     @Produces(MediaType.APPLICATION_JSON)
-    public Pool getPool(@PathParam("pool_id") @Verify(Pool.class) String id) {
+    public Pool getPool(@PathParam("pool_id") @Verify(Pool.class) String id,
+        @QueryParam("consumer") String consumerUuid,
+        @Context Principal principal) {
         Pool toReturn = poolCurator.find(id);
 
+        Consumer c = null;
+        if (consumerUuid != null) {
+            c = consumerCurator.findByUuid(consumerUuid);
+            if (c == null) {
+                throw new NotFoundException(i18n.tr("consumer: {0} not found",
+                    consumerUuid));
+            }
+
+            if (!principal.canAccess(c, Access.READ_ONLY)) {
+                throw new ForbiddenException(i18n.tr("User {0} cannot access consumer {1}",
+                    principal.getPrincipalName(), c.getUuid()));
+            }
+        }
+
         if (toReturn != null) {
+            toReturn.setCalculatedAttributes(
+                calculatedAttributesUtil.buildCalculatedAttributes(toReturn, c));
             return toReturn;
         }
 

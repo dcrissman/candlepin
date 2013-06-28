@@ -23,8 +23,7 @@ import org.candlepin.audit.EventFactory;
 import org.candlepin.audit.EventSink;
 import org.candlepin.auth.Access;
 import org.candlepin.auth.UserPrincipal;
-import org.candlepin.config.Config;
-import org.candlepin.controller.PoolManager;
+import org.candlepin.config.CandlepinCommonTestConfig;
 import org.candlepin.model.ActivationKeyCurator;
 import org.candlepin.model.Consumer;
 import org.candlepin.model.ConsumerCurator;
@@ -95,9 +94,6 @@ public class HypervisorResourceTest {
     private UserPrincipal principal;
 
     @Mock
-    private PoolManager poolManager;
-
-    @Mock
     private ComplianceRules complianceRules;
 
     @Mock
@@ -118,10 +114,12 @@ public class HypervisorResourceTest {
         this.consumerResource = new ConsumerResource(this.consumerCurator,
             this.consumerTypeCurator, null, this.subscriptionService, null,
             this.idCertService, null, this.i18n, this.sink, this.eventFactory, null, null,
-            this.userService, null, null, null, null, null, this.ownerCurator,
-            this.activationKeyCurator, null, this.complianceRules,
-            this.deletedConsumerCurator, null, new Config());
-        hypervisorResource = new HypervisorResource(consumerResource, poolManager,
+            this.userService, null, null, null, null, this.ownerCurator,
+            this.activationKeyCurator,
+            null, this.complianceRules, this.deletedConsumerCurator,
+            null, null, new CandlepinCommonTestConfig());
+
+        hypervisorResource = new HypervisorResource(consumerResource,
             consumerCurator, this.deletedConsumerCurator, i18n);
 
         // Ensure that we get the consumer that was passed in back from the create call.

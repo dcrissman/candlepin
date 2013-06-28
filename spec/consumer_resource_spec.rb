@@ -19,6 +19,15 @@ describe 'Consumer Resource' do
     @consumer2 = consumer_client(@user2, random_string("consumer2"))
   end
 
+   it 'should receive paged data back when requested' do
+    (1..4).each do |i|
+      consumer_client(@user1, random_string('system'))
+    end
+    consumers = @cp.list_consumers({:page => 1, :per_page => 2, :sort_by => "id", :order => "asc"})
+    consumers.length.should == 2
+    (consumers[0].id <=> consumers[1].id).should == -1
+  end
+
   it 'should set compliance status and update compliance status' do
     @consumer1.get_consumer()['entitlementStatus'].should == "valid"
     product1 = create_product(random_string('product'), random_string('product'))
@@ -222,7 +231,7 @@ describe 'Consumer Resource' do
     @cp.get_consumer(consumer['uuid'])['updated'].should_not == old_updated
   end
 
-  it 'should allow consumer to bind to products based on product quantity across pools' do
+  it 'should allow consumer to bind to products based on product socket quantity across pools' do
     owner = create_owner random_string('owner')
     owner_client = user_client(owner, random_string('testowner'))
     cp_client = consumer_client(owner_client, random_string('consumer123'), :system,
@@ -231,10 +240,9 @@ describe 'Consumer Resource' do
                           :attributes => { :sockets => '2', :'multi-entitlement' => 'yes', :stacking_id => '8888'})
     prod2 = create_product(random_string('product'), random_string('product-stackable'),
                           :attributes => { :sockets => '2', :'multi-entitlement' => 'yes', :stacking_id => '8888'})
-    @cp.create_subscription(owner['key'], prod1.id, 2)
-    @cp.create_subscription(owner['key'], prod1.id, 8)
-    @cp.create_subscription(owner['key'], prod2.id, 5)
-
+    @cp.create_subscription(owner['key'], prod1.id, 1)
+    @cp.create_subscription(owner['key'], prod1.id, 1)
+    @cp.create_subscription(owner['key'], prod2.id, 1)
 
     @cp.refresh_pools(owner['key'])
 
@@ -243,7 +251,6 @@ describe 'Consumer Resource' do
     total.should == 2
 
   end
-
 
   it 'should allow a consumer to specify their own UUID' do
     owner = create_owner random_string('owner')
@@ -817,7 +824,7 @@ describe 'Consumer Resource' do
     facts = {
       'system.machine' => 'x86_64',
       'lscpu.socket(s)' => '4',
-      'cpu.cpu(s)' => '12'
+      'cpu.cpu(s)' => '12',
     }
     consumer = user.register('machine1', :system, nil, facts, nil, nil, [], nil)
 
@@ -825,8 +832,11 @@ describe 'Consumer Resource' do
     facts = {
       'system.machine' => 'x86_64',
       'lscpu.socket(s)' => 'four',
-      'cpu.cpu(s)' => '8'
-    }
+      'cpu.cpu(s)' => '8',
+       # these facts dont need to be an int, they are ranges
+      'lscpu.numa_node0_cpu(s)' => '0-3',
+      'lscpu.on-line_cpu(s)_list' => '0-3'
+   }
 
     consumer_client = Candlepin.new(username=nil, password=nil,
         cert=consumer['idCert']['cert'],
@@ -838,6 +848,10 @@ describe 'Consumer Resource' do
     consumer['facts']['system.machine'].should == 'x86_64'
     consumer['facts']['lscpu.socket(s)'].should be_nil
     consumer['facts']['cpu.cpu(s)'].should == '8'
+    # range facts should be left alone, rhbz #950462 shows
+    # them being ignored
+    consumer['facts']['lscpu.on-line_cpu(s)_list'].should == '0-3'
+    consumer['facts']['lscpu.numa_node0_cpu(s)'].should == '0-3'
   end
 
 end

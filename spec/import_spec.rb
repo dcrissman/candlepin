@@ -10,6 +10,9 @@ describe 'Candlepin Import' do
   before(:all) do
     @users = []
     create_candlepin_export()
+
+    @cp.unregister @candlepin_consumer['uuid']
+
     @import_owner = @cp.create_owner(random_string("test_owner"))
     @import_owner_client = user_client(@import_owner, random_string('testuser'))
     @cp.import(@import_owner['key'], @export_filename)
@@ -22,34 +25,32 @@ describe 'Candlepin Import' do
 
   it 'creates pools' do
     pools = @import_owner_client.list_pools({:owner => @import_owner['id']})
-    pools.length.should == 2
+    pools.length.should == 4
   end
 
   it 'ignores multiplier for pool quantity' do
     pools = @import_owner_client.list_pools({:owner => @import_owner['id']})
-    pools.length.should == 2
+    pools.length.should == 4
 
-    # 1 product has a multiplier of 2 upstream, the other 1.
+    # 1 product has a multiplier of 2 upstream, the others 1.
     # 1 entitlement is consumed from each pool for the export, so
-    # quantity should be 1 on both.
+    # quantity should be 1 on each.
     pools[0]['quantity'].should == 1
     pools[1]['quantity'].should == 1
+    pools[2]['quantity'].should == 1
   end
 
   it 'modifies owner to reference upstream consumer' do
     o = @cp.get_owner(@import_owner['key'])
-    o.upstreamUuid.should == @candlepin_client.uuid
+    o.upstreamConsumer.uuid.should == @candlepin_client.uuid
   end
 
   it "originating information should be populated in the import" do
     @import_owner_client.list_imports(@import_owner['key']).find_all do |import|
-      consumer = @candlepin_client.get_consumer()
+      consumer = @candlepin_consumer
       import['generatedBy'].should == consumer['name']
       import['generatedDate'].should_not be_nil
-      import['upstreamName'].should == consumer['name']
       import['upstreamId'].should == consumer['uuid']
-      import['upstreamType'].should == consumer['type']['label']
-      import.include?('webAppPrefix').should be_true
       import['fileName'].should == @export_filename.split("/").last
     end
   end
@@ -66,7 +67,7 @@ describe 'Candlepin Import' do
     pools.length.should == 1 # this is our custom pool
     pools[0]['subscriptionId'].should == custom_sub['id']
     o = @cp.get_owner(@import_owner['key'])
-    o['upstreamUuid'].should be_nil
+    o['upstreamConsumer'].should be_nil
 
     # Make sure this still exists:
     custom_sub = @cp.get_subscription(custom_sub['id'])
@@ -74,7 +75,7 @@ describe 'Candlepin Import' do
     # should be able to re-import without an "older than existing" error:
     @cp.import(@import_owner['key'], @export_filename)
     o = @cp.get_owner(@import_owner['key'])
-    o['upstreamUuid'].should == @candlepin_client.uuid
+    o['upstreamConsumer']['uuid'].should == @candlepin_client.uuid
 
     # Delete again and make sure another owner is clear to import the
     # same manifest:
@@ -142,12 +143,14 @@ describe 'Candlepin Import' do
     owner2 = @cp.create_owner(random_string("owner1"))
     @cp.import(owner1['key'], newer_export)
     @cp.import(owner2['key'], older_export)
+    @cp.delete_owner(owner1['key'])
+    @cp.delete_owner(owner2['key'])
   end
 
   it 'should return 409 when importing manifest from different subscription management application' do
     create_candlepin_export()
     another_export = @export_filename
-    old_upstream_uuid = @cp.get_owner(@import_owner['key'])['upstreamUuid']
+    old_upstream_uuid = @cp.get_owner(@import_owner['key'])['upstreamConsumer']['uuid']
 
     begin
       @cp.import(@import_owner['key'], another_export)
@@ -159,7 +162,7 @@ describe 'Candlepin Import' do
         json["conflicts"].include?("DISTRIBUTOR_CONFLICT").should be_true
         e.http_code.should == 409
     end
-    @cp.get_owner(@import_owner['key'])['upstreamUuid'].should == old_upstream_uuid
+    @cp.get_owner(@import_owner['key'])['upstreamConsumer']['uuid'].should == old_upstream_uuid
 
     # Try again and make sure we don't see MANIFEST_SAME appear: (this was a bug)
     begin
@@ -175,23 +178,36 @@ describe 'Candlepin Import' do
     create_candlepin_export()
     another_export = @export_filename
 
-    old_upstream_uuid = @cp.get_owner(@import_owner['key'])['upstreamUuid']
+    old_upstream_uuid = @cp.get_owner(@import_owner['key'])['upstreamConsumer']['uuid']
     pools = @cp.list_owner_pools(@import_owner['key'])
     pool_ids = pools.collect { |p| p['id'] }
     @cp.import(@import_owner['key'], another_export,
       {:force => ['DISTRIBUTOR_CONFLICT']})
-    @cp.get_owner(@import_owner['key'])['upstreamUuid'].should_not == old_upstream_uuid
+    @cp.get_owner(@import_owner['key'])['upstreamConsumer']['uuid'].should_not == old_upstream_uuid
     pools = @cp.list_owner_pools(@import_owner['key'])
     new_pool_ids = pools.collect { |p| p['id'] }
     # compare without considering order, pools should have changed completely:
     new_pool_ids.should_not =~ pool_ids
   end
 
+  it 'should import arch content correctly' do
+      contents = @cp.list_content()
+      contents.each do |content|
+        if content.has_key('content_url')
+          if content['content_url'] == '/path/to/arch/specific/content'
+              content['arches'].should == ['i386', 'x86_64']
+              pp "#{content['label']}"
+              pp "#{content['arches']}"
+          end
+        end
+      end
+  end
+
   it 'should return 400 when importing manifest in use by another owner' do
     # Because the previous tests put the original import into a different state
-    # than if you just run this single one, we need to clear first and then 
+    # than if you just run this single one, we need to clear first and then
     # re-import the original.
-    # Also added the confirmation that the exception occurs when importing to 
+    # Also added the confirmation that the exception occurs when importing to
     # another owner.
     @import_owner_client.undo_import(@import_owner['key'])
     @cp.import(@import_owner['key'], @export_filename)
@@ -206,6 +222,7 @@ describe 'Candlepin Import' do
         e.http_code.should == 400
         exception = true
     end
+    @cp.delete_owner(owner2['key'])
     exception.should == true
   end
 
@@ -222,5 +239,18 @@ describe 'Candlepin Import' do
     entitlement = consumer.consume_pool(pool.id)[0]
     ent =  @cp.get_subscription_cert_by_ent_id entitlement.id
     cert.should == ent
+  end
+
+  it 'contains upstream consumer' do
+    # this information used to be on /imports but now exists on Owner
+    consumer = @candlepin_consumer
+    upstream = @cp.get_owner(@import_owner['key'])['upstreamConsumer']
+    upstream.uuid.should == consumer['uuid']
+    upstream.include?('apiUrl').should be_true
+    upstream.id.should_not be_nil
+    upstream.idCert.should_not be_nil
+    upstream.name.should == consumer['name']
+    # upstream.type caused a failure on some machines
+    upstream['type'].should == consumer['type']
   end
 end

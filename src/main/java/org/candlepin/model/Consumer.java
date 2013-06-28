@@ -52,7 +52,7 @@ import org.hibernate.annotations.Formula;
 import org.hibernate.annotations.GenericGenerator;
 import org.hibernate.annotations.Index;
 import org.hibernate.annotations.MapKeyManyToMany;
-
+import org.hibernate.annotations.Type;
 
 /**
  * A Consumer is the entity that uses a given Entitlement. It can be a user,
@@ -67,7 +67,7 @@ import org.hibernate.annotations.MapKeyManyToMany;
 @Entity
 @Table(name = "cp_consumer")
 @JsonIgnoreProperties(ignoreUnknown = true)
-@JsonFilter("ApiHateoas")
+@JsonFilter("ConsumerFilter")
 public class Consumer extends AbstractHibernateObject implements Linkable, Owned {
 
     public static final String UEBER_CERT_CONSUMER = "ueber_cert_consumer";
@@ -91,7 +91,8 @@ public class Consumer extends AbstractHibernateObject implements Linkable, Owned
     @Column(length = 32)
     private String entitlementStatus;
 
-    @Column(length = 32, nullable = false)
+    @Column(length = 32, nullable = true)
+    @Type(type = "org.candlepin.hibernate.EmptyStringUserType")
     private String serviceLevel;
 
     // for selecting Y/Z strean
@@ -157,6 +158,12 @@ public class Consumer extends AbstractHibernateObject implements Linkable, Owned
         org.hibernate.annotations.CascadeType.MERGE,
         org.hibernate.annotations.CascadeType.DELETE_ORPHAN})
     private List<GuestId> guestIds;
+
+    @OneToMany(mappedBy = "consumer", targetEntity = ConsumerCapability.class)
+    @Cascade({org.hibernate.annotations.CascadeType.ALL,
+        org.hibernate.annotations.CascadeType.MERGE,
+        org.hibernate.annotations.CascadeType.DELETE_ORPHAN})
+    private Set<ConsumerCapability> capabilities;
 
     // An instruction for the client to initiate an autoheal request.
     // WARNING: can't initialize to a default value here, we need to be able to see
@@ -560,8 +567,28 @@ public class Consumer extends AbstractHibernateObject implements Linkable, Owned
         return new Release(releaseVer);
     }
 
-    @Transient
-    public boolean isManifest() {
-        return getType().isManifest();
+    /**
+     * @return the capabilities
+     */
+    public Set<ConsumerCapability> getCapabilities() {
+        return capabilities;
+    }
+
+    /**
+     * @param capabilities the capabilities to set
+     */
+    public void setCapabilities(Set<ConsumerCapability> capabilities) {
+        if (capabilities == null) { return; }
+        if (this.capabilities == null) {
+            this.capabilities = new HashSet<ConsumerCapability>();
+        }
+        if (!this.capabilities.equals(capabilities)) {
+            this.capabilities.clear();
+            this.capabilities.addAll(capabilities);
+            this.setUpdated(new Date());
+            for (ConsumerCapability cc : this.capabilities) {
+                cc.setConsumer(this);
+            }
+        }
     }
 }
